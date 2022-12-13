@@ -1,0 +1,13 @@
+[package]
+name = "v5_core"
+description = "Vex V5 robot serial port accessor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.0"
+crc = "3.0"
+base85 = "1.1"
+libloading = "0.7"
+serialport = "4.2"
+tokio = { version = "1.22", features = [ "rt-multi-thread", "tokio-macros" ]}
