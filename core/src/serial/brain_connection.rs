@@ -49,13 +49,13 @@ impl BrainConnection {
 
     pub fn send_packet(&mut self, id: PacketId) {
         let mut packet: [u8; 5] = [0, 0, 0, 0, id.id()];
-        &mut packet[..4].copy_from_slice(&PACKET_HEADER);
+        packet[..4].copy_from_slice(&PACKET_HEADER);
         self.connection.write(&packet).unwrap();
     }
 
     pub fn send_receive_packet(&mut self, id: PacketId, timeout_millis: u128) -> PacketResponse {
         let mut packet: [u8; 5] = [0, 0, 0, 0, id.id()];
-        &mut packet[..4].copy_from_slice(&PACKET_HEADER);
+        packet[..4].copy_from_slice(&PACKET_HEADER);
         self.connection.write(&packet).unwrap();
         self.receive_packet(timeout_millis)
     }
@@ -109,32 +109,32 @@ impl BrainConnection {
         let command = buf[0];
         self.connection.read_exact(&mut buf).unwrap();
         let mut len: u16 = buf[0] as u16;
-        let mut vector = Vec::new();
+        let mut payload = Vec::new();
         if command == 0x56 && len & 0x80 == 0x80 {
             self.connection.read_exact(&mut buf).unwrap();
             len = ((len & 0x7f) << 8) + buf[0] as u16;
         }
-        vector.reserve(len as usize);
-        self.connection.read_exact(&mut vector).unwrap();
+        payload.reserve(len as usize);
+        self.connection.read_exact(&mut payload).unwrap();
         PacketResponse {
             command,
-            payload: vector
+            payload
         }
     }
 
     pub fn receive_packet_raw(&mut self, timeout_millis: u128) -> PacketResponse {
-        let mut vector = Vec::new();
-        vector.reserve(4);
+        let mut payload = Vec::new();
+        payload.reserve(4);
         let start = std::time::Instant::now();
         self.connection.set_timeout(Duration::from_millis(timeout_millis as u64)).unwrap();
         let mut success = false;
         while start.elapsed().as_millis() < timeout_millis {
-            self.connection.read_exact(&mut vector[..1]).unwrap();
-            if vector[0] != RESPONSE_HEADER[0] {
+            self.connection.read_exact(&mut payload[..1]).unwrap();
+            if payload[0] != RESPONSE_HEADER[0] {
                 continue
             }
-            self.connection.read_exact(&mut vector[..2]).unwrap();
-            if vector[1] != RESPONSE_HEADER[1] {
+            self.connection.read_exact(&mut payload[..2]).unwrap();
+            if payload[1] != RESPONSE_HEADER[1] {
                 continue
             }
             success = true;
@@ -144,14 +144,14 @@ impl BrainConnection {
             panic!("no header")
         }
 
-        self.connection.read_exact(&mut vector[2..4]).unwrap();
-        let command = vector[2];
-        let len = vector[3];
-        vector.reserve(len as usize);
-        self.connection.read_exact(&mut vector).unwrap();
+        self.connection.read_exact(&mut payload[2..4]).unwrap();
+        let command = payload[2];
+        let len = payload[3];
+        payload.reserve(len as usize);
+        self.connection.read_exact(&mut payload).unwrap();
         PacketResponse {
             command,
-            payload: vector
+            payload
         }
     }
 }

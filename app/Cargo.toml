@@ -1,5 +1,5 @@
 [package]
-name = "robot-serial-client"
+name = "v5_cli"
 description = "Vex V5 robot serial port accessor"
 version = "0.1.0"
 edition = "2021"
@@ -8,6 +8,8 @@ edition = "2021"
 v5_core = { path = "../core" }
 v5_upload = { path = "../upload" }
 v5_terminal = { path = "../terminal" }
+env_logger = "0.9.0"
 libloading = "0.7"
+rand = "0.8"
 serialport = "4.2"
 tokio = { version = "1.22", features = [ "rt-multi-thread", "tokio-macros" ]}

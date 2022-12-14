@@ -6,8 +6,10 @@ edition = "2021"
 
 [dependencies]
 clap = "4.0"
+chrono = "0.4"
 crc = "3.0"
-base85 = "1.1"
 libloading = "0.7"
+log = "0.4"
+serde = "1.0"
 serialport = "4.2"
 tokio = { version = "1.22", features = [ "rt-multi-thread", "tokio-macros" ]}
