@@ -25,6 +25,19 @@ impl PacketId {
 }
 
 #[repr(u8)]
+pub enum TransferDirection {
+    Upload = 1,
+    Download = 2
+}
+
+#[repr(u8)]
+pub enum TransferTarget {
+    DDR = 0,
+    Flash = 1,
+    Screen = 2
+}
+
+#[repr(u8)]
 pub enum Vid {
     User = 1,
     System = 15
@@ -153,5 +166,9 @@ impl BrainConnection {
             command,
             payload
         }
+    }
+
+    pub fn initialize_file_transfer(direction: TransferDirection, target: TransferTarget, vid: Vid, overwrite: bool, length: u32, addr: u32, crc: u32, typ: String, name: String, timestamp: ) {
+
     }
 }

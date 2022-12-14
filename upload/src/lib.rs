@@ -1,8 +1,14 @@
 use std::collections::HashMap;
+use std::str::FromStr;
+use std::time::SystemTime;
 use flate2::{Compression, FlushCompress};
+use ini::Ini;
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
+use v5_core::crc::{Algorithm, CRC_16_IBM_3740, CRC_32_BZIP2, CRC_32_CKSUM};
 use v5_core::plugin::Plugin;
 use v5_core::serial::{CRC16, CRC32};
+use v5_core::serialport::SerialPort;
+use crate::UploadFinalize::{Nothing, RunScreen};
 
 // export_plugin!(Box::new(UploadPlugin::default()));
 
@@ -32,7 +38,7 @@ enum UploadFinalize {
 
 impl Default for UploadFinalize {
     fn default() -> Self {
-        UploadFinalize::RunScreen
+        RunScreen
     }
 }
 
@@ -90,24 +96,36 @@ impl Plugin for UploadPlugin {
 }
 
 fn upload_program(args: ArgMatches) {
-    let mut connection = v5_core::serial::open_brain_connection(args.get_one("port").map(|f: &String| f.clone()));
+    let mut connection = v5_core::serial::open_brain_connection(args.get_one("port"));
     let cold_package = std::fs::read(*args.get_one::<&String>(COLD_PACKAGE).unwrap()).unwrap();
     let hot_package = std::fs::read(*args.get_one::<&String>(HOT_PACKAGE).unwrap()).unwrap();
     let cold_address = *args.get_one::<u32>(COLD_ADDRESS).unwrap();
     let hot_address = *args.get_one::<u32>(HOT_ADDRESS).unwrap();
     let overwrite = true;
     let index = *args.get_one::<u32>(INDEX).unwrap();
-    let cold_hash = String::from_utf8_lossy(md5::compute(cold_package.as_slice()).as_slice());
+    let cold_hash = base64::encode(md5::compute(cold_package.as_slice()));
     let slot = format!("slot_{}.bin", index);
     let mut compressed_cold_package = Vec::new();
     compressed_cold_package.reserve(2097152); // 2 MiB
-    flate2::Compress::new(Compression::best(), true).compress(&cold_package, &mut compressed_cold_package, FlushCompress::None).unwrap();
+    flate2::Compress::new(Compression(9), true).compress(&cold_package, &mut compressed_cold_package, FlushCompress::None).unwrap();
     compressed_cold_package.shrink_to_fit();
     let cold_len = compressed_cold_package.len();
     // 4 bytes,  3 ints, 4 sohrts 2 ints, 24shorts
-
+    let mut ini = Ini::new();
+    ini.with_section(Some("project"))
+        .set("version", "0.1.0")
+        .set("ide", "-");
+    ini.with_section(Some("program"))
+        .set("version", "Tommy")
+        .set("name", "Green")
+        .set("slot", "Green")
+        .set("icon", "Green")
+        .set("description", "Green")
+        .set("date", format!("{}", chrono::DateTime::from(SystemTime::now()).format("%+")));
+    let mut conf = String::new();
+    ini.write_to(&mut conf).unwrap();
     let crc = CRC32.checksum(&compressed_cold_package);
-    connection.send_large_packet()
+    connection.initialize_file_transfer();
 
     let crc1 = CRC16.digest().;
 
