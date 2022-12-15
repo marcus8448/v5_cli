@@ -8,9 +8,22 @@ const TEN_MILLIS: Duration = Duration::from_millis(10);
 
 #[repr(u8)]
 pub enum PacketId {
-    A = 1,
+    GetSystemVersion = 0xA4,
+    FileTransferChannel = 0x10,
+    FileTransferInitialize = 0x11,
+    FileTransferComplete = 0x12,
+    FileTransferWrite = 0x13,
+    FileTransferRead = 0x14,
+    SetFileTransferLink = 0x15,
+    GetDirectoryCount = 0x16,
+    GetFileMetadataByIndex = 0x17,
+    ExecuteProgram = 0x18,
+    GetFileMetadataByName = 0x19,
     GetProduct = 0x21,
-    B = 12
+    GetSystemStatus = 0x22,
+    SetProgramFileMetadata = 0x1A,
+    DeleteFile = 0x1B,
+    GetFileSlot = 0x1C
 }
 
 pub struct PacketResponse {
@@ -40,7 +53,10 @@ pub enum TransferTarget {
 #[repr(u8)]
 pub enum Vid {
     User = 1,
-    System = 15
+    System = 15,
+    Rms = 16,
+    Pros = 24,
+    Mw = 32
 }
 
 #[repr(u8)]
@@ -73,28 +89,34 @@ impl BrainConnection {
         self.receive_packet(timeout_millis)
     }
 
-    pub fn send_data_packet(&mut self, id: PacketId, data: Box<[u8]>) {
+    pub fn send_data_packet(&mut self, id: PacketId, data: &[u8]) {
         self.send_packet(id);
         let mut vector = Vec::new();
         vector.reserve(/*5 + */data.len());
-        // vector.as_mut_slice()[..4].copy_from_slice(&PACKET_HEADER);
+        // vector[..4].copy_from_slice(&PACKET_HEADER);
         // vector.push(id.id());
-        vector.as_mut_slice()/*[5..]*/.copy_from_slice(&data);
+        vector/*[5..]*/.copy_from_slice(&data);
     }
 
-    pub fn send_receive_data_packet(&mut self, id: PacketId, data: Box<[u8]>, timeout_millis: u128) -> PacketResponse {
+    pub fn send_receive_data_packet(&mut self, id: PacketId, data: &[u8], timeout_millis: u128) -> PacketResponse {
         self.send_packet(id);
         let mut vector = Vec::new();
         vector.reserve(data.len());
-        vector.as_mut_slice().copy_from_slice(&data);
+        vector.copy_from_slice(&data);
         return self.receive_packet(timeout_millis);
     }
 
-    pub fn send_large_packet(&mut self, id: PacketId) {
+    pub fn send_extended_packet(&mut self, id: PacketId, data: &[u8]) {
         let mut vector = Vec::new();
-        vector.reserve(5);
-        vector.splice(0..0, PACKET_HEADER);
+        vector.reserve(5 + data.len());
+        vector[..4].copy_from_slice(&PACKET_HEADER);
         vector.push(id.id());
+        vector[5..].copy_from_slice(&data);
+    }
+
+    pub fn send_receive_extended_packet(&mut self, id: PacketId, data: &[u8], timeout_millis: u128) -> PacketResponse {
+        self.send_extended_packet(id, data);
+        self.receive_packet(timeout_millis)
     }
 
     pub fn receive_packet(&mut self, timeout_millis: u128) -> PacketResponse {
@@ -166,6 +188,24 @@ impl BrainConnection {
             command,
             payload
         }
+    }
+
+    pub fn read_file_metadata(&mut self, name: &str, vid: Vid) {
+        assert!(name.is_ascii());
+        assert!(name.len() > 0);
+        
+        let mut data: [u8; 26] = [0, 0, ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '];
+        data[0] = vid.into();
+        data[1] = 0;
+        data[2..].copy_from_slice(name.as_bytes());
+        let response = self.send_receive_extended_packet(PacketId::GetFileMetadataByName, &data, 5000);
+        let vid = response.payload[0];
+        let size = response.payload[1];
+        let addr = response.payload[2];
+        let crc: u32 = u32::from_le_bytes(addr[3..7]);
+        let type_: u32 = u32::from_le_bytes(addr[7..11]);
+        let timestamp: u32 = u32::from_le_bytes(addr[11..15]);
+        assert!(response.payload == 1);
     }
 
     pub fn initialize_file_transfer(direction: TransferDirection, target: TransferTarget, vid: Vid, overwrite: bool, length: u32, addr: u32, crc: u32, typ: String, name: String, timestamp: ) {

@@ -7,6 +7,7 @@ use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint
 use v5_core::crc::{Algorithm, CRC_16_IBM_3740, CRC_32_BZIP2, CRC_32_CKSUM};
 use v5_core::plugin::Plugin;
 use v5_core::serial::{CRC16, CRC32};
+use v5_core::serial::brain_connection::{PacketId, Vid};
 use v5_core::serialport::SerialPort;
 use crate::UploadFinalize::{Nothing, RunScreen};
 
@@ -18,6 +19,7 @@ const HOT_PACKAGE: &str = "hot";
 const COLD_ADDRESS: &str = "hot-address";
 const HOT_ADDRESS: &str = "hot-address";
 const NAME: &str = "name";
+const DESCRIPTION: &str = "description";
 const INDEX: &str = "index";
 
 pub struct UploadPlugin {
@@ -83,6 +85,12 @@ impl Plugin for UploadPlugin {
                 .default_value("Program")
                 .action(ArgAction::Set)
             )
+            .arg(Arg::new(DESCRIPTION)
+                .short('n')
+                .help("Description of the program when uploading")
+                .default_value("???")
+                .action(ArgAction::Set)
+            )
             .arg(Arg::new(INDEX)
                 .short('i')
                 .help("What slot to install the program into (1-7)")
@@ -96,7 +104,9 @@ impl Plugin for UploadPlugin {
 }
 
 fn upload_program(args: ArgMatches) {
-    let mut connection = v5_core::serial::open_brain_connection(args.get_one("port"));
+    let program_name = args.get_one::<String>(NAME).unwrap();
+    let description = args.get_one::<String>(DESCRIPTION).unwrap();
+    let mut connection = v5_core::serial::open_brain_connection(args.get_one::<String>("port").map(|f| f.clone()));
     let cold_package = std::fs::read(*args.get_one::<&String>(COLD_PACKAGE).unwrap()).unwrap();
     let hot_package = std::fs::read(*args.get_one::<&String>(HOT_PACKAGE).unwrap()).unwrap();
     let cold_address = *args.get_one::<u32>(COLD_ADDRESS).unwrap();
@@ -114,13 +124,13 @@ fn upload_program(args: ArgMatches) {
     let mut ini = Ini::new();
     ini.with_section(Some("project"))
         .set("version", "0.1.0")
-        .set("ide", "-");
+        .set("ide", "none");
     ini.with_section(Some("program"))
-        .set("version", "Tommy")
-        .set("name", "Green")
-        .set("slot", "Green")
-        .set("icon", "Green")
-        .set("description", "Green")
+        .set("version", "0.1.0")
+        .set("name", program_name)
+        .set("slot", index)
+        .set("icon", "USER902x.bmp")
+        .set("description", description)
         .set("date", format!("{}", chrono::DateTime::from(SystemTime::now()).format("%+")));
     let mut conf = String::new();
     ini.write_to(&mut conf).unwrap();

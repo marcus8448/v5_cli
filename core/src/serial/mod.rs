@@ -1,5 +1,5 @@
-mod brain_connection;
-mod robot_connection;
+pub mod brain_connection;
+pub mod robot_connection;
 
 use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
 use serialport::{DataBits, Parity, SerialPort, SerialPortType};
