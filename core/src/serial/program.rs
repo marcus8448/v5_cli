@@ -1,12 +1,12 @@
 use serialport::SerialPort;
 
-pub struct RobotConnection {
+pub struct Connection {
     connection: Box<dyn SerialPort>
 }
 
-impl RobotConnection {
-    pub fn new(connection: Box<dyn SerialPort>) -> RobotConnection {
-        RobotConnection {
+impl Connection {
+    pub fn new(connection: Box<dyn SerialPort>) -> Connection {
+        Connection {
             connection
         }
     }
@@ -14,7 +14,16 @@ impl RobotConnection {
     pub fn send_u8(&mut self, id: u8) -> std::io::Result<usize> {
         self.connection.write(&id.to_le_bytes())
     }
+
     pub fn send_u16(&mut self, id: u16) -> std::io::Result<usize> {
+        self.connection.write(&id.to_le_bytes())
+    }
+
+    pub fn send_u32(&mut self, id: u32) -> std::io::Result<usize> {
+        self.connection.write(&id.to_le_bytes())
+    }
+
+    pub fn send_u64(&mut self, id: u64) -> std::io::Result<usize> {
         self.connection.write(&id.to_le_bytes())
     }
 

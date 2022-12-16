@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::ops::Sub;
 use std::str::FromStr;
 use std::time::SystemTime;
 use flate2::{Compression, FlushCompress};
 use ini::Ini;
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::crc::{Algorithm, CRC_16_IBM_3740, CRC_32_BZIP2, CRC_32_CKSUM};
+use v5_core::log::info;
 use v5_core::plugin::Plugin;
+use v5_core::serial::system::EPOCH_TO_JAN_1_2000;
 use v5_core::serial::{CRC16, CRC32};
 use v5_core::serial::brain_connection::{PacketId, Vid};
 use v5_core::serialport::SerialPort;
@@ -106,7 +109,7 @@ impl Plugin for UploadPlugin {
 fn upload_program(args: ArgMatches) {
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
-    let mut connection = v5_core::serial::open_brain_connection(args.get_one::<String>("port").map(|f| f.clone()));
+    let mut connection = v5_core::serial::connect_to_brain(args.get_one("port"));
     let cold_package = std::fs::read(*args.get_one::<&String>(COLD_PACKAGE).unwrap()).unwrap();
     let hot_package = std::fs::read(*args.get_one::<&String>(HOT_PACKAGE).unwrap()).unwrap();
     let cold_address = *args.get_one::<u32>(COLD_ADDRESS).unwrap();
@@ -120,7 +123,7 @@ fn upload_program(args: ArgMatches) {
     flate2::Compress::new(Compression(9), true).compress(&cold_package, &mut compressed_cold_package, FlushCompress::None).unwrap();
     compressed_cold_package.shrink_to_fit();
     let cold_len = compressed_cold_package.len();
-    // 4 bytes,  3 ints, 4 sohrts 2 ints, 24shorts
+    // 4 bytes,  3 ints, 4lenChar 2 ints, 24char_s
     let mut ini = Ini::new();
     ini.with_section(Some("project"))
         .set("version", "0.1.0")
@@ -135,6 +138,11 @@ fn upload_program(args: ArgMatches) {
     let mut conf = String::new();
     ini.write_to(&mut conf).unwrap();
     let crc = CRC32.checksum(&compressed_cold_package);
+    let available_package = connection.read_file_metadata(&cold_hash, vid);
+    if (available_package.size != cold_len || available_package.crc != crc) {
+        info!("Cold package differs! Re-uploading...");
+        
+    }
     connection.initialize_file_transfer();
 
     let crc1 = CRC16.digest().;

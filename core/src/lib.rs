@@ -3,6 +3,7 @@ pub mod serial;
 
 pub extern crate clap;
 pub extern crate crc;
+pub extern crate log;
 pub extern crate serialport;
 
 extern crate core;
