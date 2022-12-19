@@ -116,7 +116,7 @@ fn upload_program(args: ArgMatches) {
     let hot_address = *args.get_one::<u32>(HOT_ADDRESS).unwrap();
     let overwrite = true;
     let index = *args.get_one::<u32>(INDEX).unwrap();
-    let cold_hash = base64::encode(md5::compute(cold_package.as_slice()));
+    let cold_hash = base64::encode(md5::compute(&cold_package));
     let slot = format!("slot_{}.bin", index);
     let mut compressed_cold_package = Vec::new();
     compressed_cold_package.reserve(2097152); // 2 MiB
@@ -138,7 +138,7 @@ fn upload_program(args: ArgMatches) {
     let mut conf = String::new();
     ini.write_to(&mut conf).unwrap();
     let crc = CRC32.checksum(&compressed_cold_package);
-    let available_package = connection.read_file_metadata(&cold_hash, vid);
+    let available_package = connection.read_file_metadata(&cold_hash, vid).unwrap();
     if (available_package.size != cold_len || available_package.crc != crc) {
         info!("Cold package differs! Re-uploading...");
         
