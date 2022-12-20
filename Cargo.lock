@@ -273,6 +273,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "extendhash"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9812c4d73200994a644a38c0d0a5397cf51b5e28ac02668601d56df902f450e6"
+
+[[package]]
 name = "flate2"
 version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -458,12 +464,6 @@ checksum = "b823e83b2affd8f40a9ee8c29dbc56404c1e34cd2710921f2801e2cf29527afa"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "md5"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"
@@ -793,8 +793,8 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chrono",
+ "extendhash",
  "flate2",
- "md5",
  "rust-ini",
  "v5_core",
 ]

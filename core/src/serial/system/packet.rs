@@ -3,6 +3,7 @@ use std::io::{Result, Write};
 use crate::serial::CRC16;
 
 const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
+const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 const EXT_PACKET_ID: u8 = 0x56;
 
 #[repr(u8)]
@@ -31,24 +32,85 @@ impl PacketId {
     }
 }
 
+pub struct PacketResponse {
+    command: u8,
+    payload: Vec<u8>,
+    data_start: u8
+}
+
+impl PacketResponse {
+    pub fn get_command(&self) -> u8 {
+        self.command
+    }
+
+    pub fn get_full_payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    pub fn get_data(&self) -> &[u8] {
+        &self.payload[(self.data_start as usize)..]
+    }
+}
+
+#[repr(u8)]
+pub enum Nack {
+    General = 0xFF,
+    InvalidCrc = 0xCE,
+    PayloadTooSmall = 0xD0,
+    TransferSizeTooLarge = 0xD1,
+    CrcError = 0xD2,
+    ProgramFileError = 0xD3,
+    UninitializedTransfer = 0xD4,
+    InvalidInitialization = 0xD5,
+    NonPaddedData = 0xD6,
+    UnexpectedPacketAddress = 0xD7,
+    LengthMismatch = 0xD8,
+    NonExistentDirectory = 0xD9,
+    FileIndexFull = 0xDA,
+    FileExists = 0xDB
+}
+
+impl Nack {
+    pub fn maybe_find(id: u8) -> Option<Self> {
+        match id {
+            0xFF => Some(Self::General),
+            0xCE => Some(Self::InvalidCrc),
+            0xD0 => Some(Self::PayloadTooSmall),
+            0xD1 => Some(Self::TransferSizeTooLarge),
+            0xD2 => Some(Self::CrcError),
+            0xD3 => Some(Self::ProgramFileError),
+            0xD4 => Some(Self::UninitializedTransfer),
+            0xD5 => Some(Self::InvalidInitialization),
+            0xD6 => Some(Self::NonPaddedData),
+            0xD7 => Some(Self::UnexpectedPacketAddress),
+            0xD8 => Some(Self::LengthMismatch),
+            0xD9 => Some(Self::NonExistentDirectory),
+            0xDA => Some(Self::FileIndexFull),
+            0xDB => Some(Self::FileExists),
+            _ => None
+        }
+    }
+}
+
 pub trait Packet<'a> {
     fn create(connection: &'a mut Connection, id: PacketId) -> Self;
 
-    fn write_u8(&mut self, value: u8) -> Result<&mut Self>;
-    fn write_i8(&mut self, value: i8) -> Result<&mut Self>;
-    fn write_u16(&mut self, value: u16) -> Result<&mut Self>;
-    fn write_i16(&mut self, value: i16) -> Result<&mut Self>;
-    fn write_u32(&mut self, value: u32) -> Result<&mut Self>;
-    fn write_i32(&mut self, value: i32) -> Result<&mut Self>;
-    fn write_u64(&mut self, value: u64) -> Result<&mut Self>;
-    fn write_i64(&mut self, value: i64) -> Result<&mut Self>;
-    fn write_u128(&mut self, value: u128) -> Result<&mut Self>;
-    fn write_i128(&mut self, value: i128) -> Result<&mut Self>;
-    fn write_f32(&mut self, value: u32) -> Result<&mut Self>;
-    fn write_f64(&mut self, value: u64) -> Result<&mut Self>;
-    fn write(&mut self, slice: &[u8]) -> Result<&mut Self>;
-    fn pad(&mut self, amount: u16) -> Result<&mut Self>;
-    fn send(self) -> Result<()>;
+    fn write_u8(&mut self, value: u8) -> Result<()>;
+    fn write_i8(&mut self, value: i8) -> Result<()>;
+    fn write_u16(&mut self, value: u16) -> Result<()>;
+    fn write_i16(&mut self, value: i16) -> Result<()>;
+    fn write_u32(&mut self, value: u32) -> Result<()>;
+    fn write_i32(&mut self, value: i32) -> Result<()>;
+    fn write_u64(&mut self, value: u64) -> Result<()>;
+    fn write_i64(&mut self, value: i64) -> Result<()>;
+    fn write_u128(&mut self, value: u128) -> Result<()>;
+    fn write_i128(&mut self, value: i128) -> Result<()>;
+    fn write_f32(&mut self, value: u32) -> Result<()>;
+    fn write_f64(&mut self, value: u64) -> Result<()>;
+    fn write(&mut self, slice: &[u8]) -> Result<()>;
+    fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()>;
+    fn pad(&mut self, amount: u16) -> Result<()>;
+    fn send(self) -> Result<PacketResponse>;
 }
 
 pub struct BasicPacket<'a> {
@@ -62,87 +124,132 @@ pub struct ExtendedPacket<'a> {
 
 impl<'a> Packet<'a> for BasicPacket<'a> {
     fn create(connection: &'a mut Connection, id: PacketId) -> Self {
-        connection.connection.write(PACKET_HEADER).unwrap();
-        connection.connection.write(std::slice::from_ref(&id.id())).unwrap();
+        connection.raw.write(PACKET_HEADER).unwrap();
+        connection.raw.write(std::slice::from_ref(&id.id())).unwrap();
         BasicPacket { connection }
     }
 
-    fn write_u8(&mut self, value: u8) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_u8(&mut self, value: u8) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_i8(&mut self, value: i8) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_i8(&mut self, value: i8) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_u16(&mut self, value: u16) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_u16(&mut self, value: u16) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_i16(&mut self, value: i16) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_i16(&mut self, value: i16) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_u32(&mut self, value: u32) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_u32(&mut self, value: u32) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_i32(&mut self, value: i32) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_i32(&mut self, value: i32) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_u64(&mut self, value: u64) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_u64(&mut self, value: u64) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_i64(&mut self, value: i64) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_i64(&mut self, value: i64) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_u128(&mut self, value: u128) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_u128(&mut self, value: u128) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_i128(&mut self, value: i128) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_i128(&mut self, value: i128) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_f32(&mut self, value: u32) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_f32(&mut self, value: u32) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write_f64(&mut self, value: u64) -> Result<&mut Self> {
-        self.connection.connection.write(&value.to_le_bytes())?;
-        Ok(self)
+    fn write_f64(&mut self, value: u64) -> Result<()> {
+        self.connection.raw.write(&value.to_le_bytes())?;
+        Ok(())
     }
 
-    fn write(&mut self, slice: &[u8]) -> Result<&mut Self> {
-        self.connection.connection.write(slice)?;
-        Ok(self)
+    fn write(&mut self, slice: &[u8]) -> Result<()> {
+        self.connection.raw.write(slice)?;
+        Ok(())
+    }
+    
+    fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
+        assert!(string.is_ascii());
+        assert!(string.len() > 0);
+        assert!(string.len() <= target_len as usize);
+        self.write(string.as_bytes())?;
+        self.pad(target_len - string.len() as u16)?;
+        Ok(())
     }
 
-    fn pad(&mut self, amount: u16) -> Result<&mut Self> {
+    fn pad(&mut self, amount: u16) -> Result<()> {
         let zero = std::slice::from_ref(&0_u8);
         for _ in 0..amount {
-            self.connection.connection.write(zero)?;
+            self.connection.raw.write(zero)?;
         }
-        Ok(self)
+        Ok(())
     }
 
-    fn send(self) -> Result<()> {
+    fn send(self) -> Result<PacketResponse> {
         self.connection.flush()?;
-        Ok(())
+
+        let mut payload = Vec::new();
+        payload.reserve(4);
+        loop {
+            self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
+            if payload[0] != RESPONSE_HEADER[0] {
+                continue
+            }
+            self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
+            if payload[1] != RESPONSE_HEADER[1] {
+                continue
+            }
+            break
+        }
+
+        self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
+        let command = payload[2];
+        self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
+        let mut len: u16 = payload[3] as u16;
+        let data_start: u8;
+        if command == 0x56 && len & 0x80 == 0x80 {
+            self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
+            len = ((len & 0x7f) << 8) + payload[4] as u16;
+
+            data_start = payload.len() as u8;
+            payload.reserve(len as usize);
+            self.connection.raw.read_exact(&mut payload[5..]).unwrap();
+        } else {
+            data_start = payload.len() as u8;
+            payload.reserve(len as usize);
+            self.connection.raw.read_exact(&mut payload[4..]).unwrap();
+        }
+        Ok(PacketResponse {
+            command,
+            payload,
+            data_start
+        })
     }
 }
 
@@ -162,83 +269,259 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         ExtendedPacket::create_sized(connection, id, 64)
     }
 
-    fn write_u8(&mut self, value: u8) -> Result<&mut Self> {
+    fn write_u8(&mut self, value: u8) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_i8(&mut self, value: i8) -> Result<&mut Self> {
+    fn write_i8(&mut self, value: i8) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_u16(&mut self, value: u16) -> Result<&mut Self> {
+    fn write_u16(&mut self, value: u16) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_i16(&mut self, value: i16) -> Result<&mut Self> {
+    fn write_i16(&mut self, value: i16) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_u32(&mut self, value: u32) -> Result<&mut Self> {
+    fn write_u32(&mut self, value: u32) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_i32(&mut self, value: i32) -> Result<&mut Self> {
+    fn write_i32(&mut self, value: i32) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_u64(&mut self, value: u64) -> Result<&mut Self> {
+    fn write_u64(&mut self, value: u64) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_i64(&mut self, value: i64) -> Result<&mut Self> {
+    fn write_i64(&mut self, value: i64) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_u128(&mut self, value: u128) -> Result<&mut Self> {
+    fn write_u128(&mut self, value: u128) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_i128(&mut self, value: i128) -> Result<&mut Self> {
+    fn write_i128(&mut self, value: i128) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_f32(&mut self, value: u32) -> Result<&mut Self> {
+    fn write_f32(&mut self, value: u32) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write_f64(&mut self, value: u64) -> Result<&mut Self> {
+    fn write_f64(&mut self, value: u64) -> Result<()> {
         self.data.extend_from_slice(&value.to_le_bytes());
-        Ok(self)
+        Ok(())
     }
 
-    fn write(&mut self, slice: &[u8]) -> Result<&mut Self> {
+    fn write(&mut self, slice: &[u8]) -> Result<()> {
         self.data.extend_from_slice(slice);
-        Ok(self)
+        Ok(())
+    }
+    
+    fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
+        assert!(string.is_ascii());
+        assert!(string.len() > 0);
+        assert!(string.len() <= target_len as usize);
+        self.write(string.as_bytes())?;
+        self.pad(target_len - string.len() as u16)?;
+        Ok(())
     }
 
-    fn pad(&mut self, amount: u16) -> Result<&mut Self> {
+    fn pad(&mut self, amount: u16) -> Result<()> {
         for _ in 0..amount {
             self.data.push(0);
         }
-        Ok(self)
-    }
-
-    fn send(mut self) -> Result<()> {
-        self.data.splice(6..6, self.data.len().to_le_bytes());
-        self.connection.connection.write(&self.data)?;
-        self.connection.connection.write(&CRC16.checksum(&self.data).to_le_bytes())?;
-        self.connection.flush()?;
         Ok(())
     }
+
+    fn send(mut self) -> Result<PacketResponse> {
+        self.data.splice(6..6, self.data.len().to_le_bytes());
+        self.connection.raw.write(&self.data)?;
+        self.connection.raw.write(&CRC16.checksum(&self.data).to_le_bytes())?;
+        self.connection.flush()?;
+
+        let sent_command = self.data[5];
+
+        let mut payload = self.data;
+        payload.clear();
+        payload.reserve(5);
+
+        loop {
+            self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
+            if payload[0] != RESPONSE_HEADER[0] {
+                continue
+            }
+            self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
+            if payload[1] != RESPONSE_HEADER[1] {
+                continue
+            }
+            break
+        }
+
+        self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
+        let command = payload[2];
+        self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
+        let mut len: u16 = payload[3] as u16;
+        let data_start: u8;
+        if command == 0x56 && len & 0x80 == 0x80 {
+            self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
+            len = ((len & 0x7f) << 8) + payload[4] as u16;
+
+            data_start = payload.len() as u8;
+            payload.reserve(len as usize);
+            self.connection.raw.read_exact(&mut payload[5..]).unwrap();
+        } else {
+            data_start = payload.len() as u8;
+            payload.reserve(len as usize);
+            self.connection.raw.read_exact(&mut payload[4..]).unwrap();
+        }
+
+        assert_eq!(command, EXT_PACKET_ID);
+        assert_eq!(sent_command, payload[data_start as usize]);
+        assert_eq!(CRC16.checksum(&payload), 0);
+
+        if let Some(nack) = Nack::maybe_find(payload[(data_start + 1) as usize]) {
+            panic!("nack!") //todo
+        }
+
+        //todo: check length
+
+        Ok(PacketResponse {
+            command,
+            payload,
+            data_start
+        })
+    }
 }
+
+/*
+    pub fn receive_packet(&mut self, timeout_millis: u64) -> io::Result<PacketResponse> {
+        let mut buf: [u8; 1] = [0];
+        let start = std::time::Instant::now();
+        self.connection.set_timeout(Duration::from_millis(timeout_millis)).unwrap();
+        let mut success = false;
+        while start.elapsed().as_millis() < timeout_millis as u128 {
+            self.connection.read_exact(&mut buf).unwrap();
+            if buf[0] != RESPONSE_HEADER[0] {
+                continue
+            }
+            self.connection.read_exact(&mut buf).unwrap();
+            if buf[0] != RESPONSE_HEADER[1] {
+                continue
+            }
+            success = true;
+            break
+        }
+        if !success {
+            return Err(io::Error::new(ErrorKind::InvalidData, "Packet header not found."));
+        }
+
+        self.connection.read_exact(&mut buf).unwrap();
+        let command = buf[0];
+        self.connection.read_exact(&mut buf).unwrap();
+        let mut len: u16 = buf[0] as u16;
+        let mut payload = Vec::new();
+        if command == 0x56 && len & 0x80 == 0x80 {
+            self.connection.read_exact(&mut buf).unwrap();
+            len = ((len & 0x7f) << 8) + buf[0] as u16;
+        }
+        payload.reserve(len as usize);
+        self.connection.read_exact(&mut payload).unwrap();
+        Ok(PacketResponse {
+            command,
+            payload
+        })
+    }
+
+    pub fn receive_packet_raw(&mut self, timeout_millis: u64) -> io::Result<PacketResponse> {
+        let mut payload = Vec::new();
+        payload.reserve(4);
+        let start = std::time::Instant::now();
+        self.connection.set_timeout(Duration::from_millis(timeout_millis)).unwrap();
+        let mut success = false;
+        while start.elapsed().as_millis() < timeout_millis as u128 {
+            self.connection.read_exact(&mut payload[0..1]).unwrap();
+            if payload[0] != RESPONSE_HEADER[0] {
+                continue
+            }
+            self.connection.read_exact(&mut payload[1..2]).unwrap();
+            if payload[1] != RESPONSE_HEADER[1] {
+                continue
+            }
+            success = true;
+            break
+        }
+        if !success {
+            return Err(io::Error::new(ErrorKind::InvalidData, "Packet header not found."));
+        }
+
+        self.connection.read_exact(&mut payload[2..3]).unwrap();
+        let command = payload[2];
+        self.connection.read_exact(&mut payload[3..4]).unwrap();
+        let mut len: u16 = payload[3] as u16;
+        let mut payload = Vec::new();
+        if command == 0x56 && len & 0x80 == 0x80 {
+            self.connection.read_exact(&mut payload[4..5]).unwrap();
+            len = ((len & 0x7f) << 8) + payload[4] as u16;
+
+            payload.reserve(len as usize);
+            self.connection.read_exact(&mut payload[5..]).unwrap();
+        } else {
+            payload.reserve(len as usize);
+            self.connection.read_exact(&mut payload[4..]).unwrap();
+        }
+        Ok(PacketResponse {
+            command,
+            payload
+        })
+    }
+
+    pub fn receive_extended_packet(&mut self, timeout_millis: u64) -> io::Result<PacketResponse> {
+        let mut payload = Vec::new();
+        payload.reserve(4);
+        let start = std::time::Instant::now();
+        self.connection.set_timeout(Duration::from_millis(timeout_millis)).unwrap();
+        let mut success = false;
+        while start.elapsed().as_millis() < timeout_millis as u128 {
+            self.connection.read_exact(&mut payload[..1]).unwrap();
+            if payload[0] != RESPONSE_HEADER[0] {
+                continue
+            }
+            self.connection.read_exact(&mut payload[..2]).unwrap();
+            if payload[1] != RESPONSE_HEADER[1] {
+                continue
+            }
+            success = true;
+            break
+        }
+        if !success {
+            return Err(io::Error::new(ErrorKind::InvalidData, "Packet header not found."));
+        }
+
+        self.connection.read_exact(&mut payload[2..4]).unwrap();
+        let command = payload[2];
+        let len = payload[3];
+        payload.reserve(len as usize);
+        self.connection.read_exact(&mut payload).unwrap();
+        Ok(PacketResponse {
+            command,
+            payload
+        })
+    }
+    */

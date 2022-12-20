@@ -9,6 +9,6 @@ edition = "2021"
 v5_core = { path = "../core" }
 base64 = "0.20"
 chrono = "0.4"
+extendhash = "1.0"
 flate2 = "1.0"
-md5 = "0.7"
 rust-ini = "0.18"

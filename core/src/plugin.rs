@@ -3,6 +3,7 @@ use std::path::Path;
 use clap::{ArgMatches, Command};
 use libloading::Symbol;
 
+#[no_mangle]
 pub static mut DEFAULT_PLUGIN_REF: Option<Box<unsafe extern fn (plugins: &mut Vec<Box<dyn Plugin>>)>> = None;
 
 #[macro_export]
@@ -19,8 +20,6 @@ macro_rules! export_plugin {
 pub trait Plugin {
     fn get_name(&self) -> &'static str;
     fn create_commands(&self, command: Command, registry: &mut HashMap<&'static str, fn(ArgMatches)>) -> Command;
-
-    fn register_serial_plugins(&self);
 }
 
 pub fn load_plugins() -> Vec<Box<dyn Plugin>> {

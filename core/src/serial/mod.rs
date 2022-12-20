@@ -1,5 +1,6 @@
 pub mod system;
 pub mod program;
+pub mod error;
 
 use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
 use serialport::{DataBits, Parity, SerialPort, SerialPortType};
@@ -45,7 +46,7 @@ pub fn print_out_ports(port_type: Option<PortType>) {
 }
 
 pub fn open_serial_port(port: Option<String>, port_type: PortType) -> Box<dyn SerialPort> {
-    return serialport::new(port.or(find_port(port_type)).unwrap(), 115200).parity(Parity::None).data_bits(DataBits::Eight).open().expect("Failed to connect to robot!");
+    return serialport::new(port.or(find_port(port_type)).expect("Unable to find V5 port!"), 115200).parity(Parity::None).data_bits(DataBits::Eight).open().expect("Failed to connect to robot!");
 }
 
 pub fn open_robot_connection(port: Option<String>) -> program::Connection {
