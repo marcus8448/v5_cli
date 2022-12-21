@@ -1,6 +1,6 @@
 use crate::serial::system::Connection;
-use std::io::{Result, Write};
 use crate::serial::CRC16;
+use std::io::{Result, Write};
 
 const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
@@ -38,7 +38,7 @@ pub struct PacketResponse {
     command: u8,
     payload: Vec<u8>,
     data_start: usize,
-    data_end: usize
+    data_end: usize,
 }
 
 impl PacketResponse {
@@ -70,7 +70,7 @@ pub enum Nack {
     LengthMismatch = 0xD8,
     NonExistentDirectory = 0xD9,
     FileIndexFull = 0xDA,
-    FileExists = 0xDB
+    FileExists = 0xDB,
 }
 
 impl Nack {
@@ -90,7 +90,7 @@ impl Nack {
             0xD9 => Some(Self::NonExistentDirectory),
             0xDA => Some(Self::FileIndexFull),
             0xDB => Some(Self::FileExists),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -118,18 +118,21 @@ pub trait Packet<'a> {
 }
 
 pub struct BasicPacket<'a> {
-    connection: &'a mut Connection
+    connection: &'a mut Connection,
 }
 
 pub struct ExtendedPacket<'a> {
     connection: &'a mut Connection,
-    data: Vec<u8>
+    data: Vec<u8>,
 }
 
 impl<'a> Packet<'a> for BasicPacket<'a> {
     fn create(connection: &'a mut Connection, id: PacketId) -> Self {
         connection.raw.write(PACKET_HEADER).unwrap();
-        connection.raw.write(std::slice::from_ref(&id.id())).unwrap();
+        connection
+            .raw
+            .write(std::slice::from_ref(&id.id()))
+            .unwrap();
         BasicPacket { connection }
     }
 
@@ -205,7 +208,7 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
         self.connection.raw.write(std::slice::from_ref(&0))?; // null terminator
         Ok(())
     }
-    
+
     fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
         assert!(string.is_ascii());
         assert!(!string.contains('\0'));
@@ -232,13 +235,13 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
         loop {
             self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
             if payload[0] != RESPONSE_HEADER[0] {
-                continue
+                continue;
             }
             self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
             if payload[1] != RESPONSE_HEADER[1] {
-                continue
+                continue;
             }
-            break
+            break;
         }
 
         self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
@@ -263,7 +266,7 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
             command,
             payload,
             data_start,
-            data_end
+            data_end,
         })
     }
 }
@@ -275,7 +278,10 @@ impl<'a> ExtendedPacket<'a> {
         vec.extend_from_slice(PACKET_HEADER);
         vec.push(EXT_PACKET_ID);
         vec.push(id.id());
-        ExtendedPacket { connection, data: vec }
+        ExtendedPacket {
+            connection,
+            data: vec,
+        }
     }
 }
 
@@ -357,7 +363,7 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         self.data.push(0); // null terminator
         Ok(())
     }
-    
+
     fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
         assert!(string.is_ascii());
         assert!(!string.contains('\0'));
@@ -378,7 +384,9 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
     fn send(mut self) -> Result<PacketResponse> {
         self.data.splice(6..6, self.data.len().to_le_bytes());
         self.connection.raw.write(&self.data)?;
-        self.connection.raw.write(&CRC16.checksum(&self.data).to_le_bytes())?;
+        self.connection
+            .raw
+            .write(&CRC16.checksum(&self.data).to_le_bytes())?;
         self.connection.flush()?;
 
         let sent_command = self.data[5];
@@ -390,13 +398,13 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         loop {
             self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
             if payload[0] != RESPONSE_HEADER[0] {
-                continue
+                continue;
             }
             self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
             if payload[1] != RESPONSE_HEADER[1] {
-                continue
+                continue;
             }
-            break
+            break;
         }
 
         self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
@@ -433,7 +441,7 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
             command,
             payload,
             data_start,
-            data_end
+            data_end,
         })
     }
 }

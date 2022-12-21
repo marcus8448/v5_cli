@@ -1,14 +1,12 @@
 use serialport::SerialPort;
 
 pub struct Connection {
-    connection: Box<dyn SerialPort>
+    connection: Box<dyn SerialPort>,
 }
 
 impl Connection {
     pub fn new(connection: Box<dyn SerialPort>) -> Connection {
-        Connection {
-            connection
-        }
+        Connection { connection }
     }
 
     pub fn send_u8(&mut self, id: u8) -> std::io::Result<usize> {
@@ -36,7 +34,9 @@ impl Connection {
         if buf.len() > len {
             panic!("buf > len");
         }
-        self.connection.read_exact(&mut buf[0..len]).expect("Failed to read!");
+        self.connection
+            .read_exact(&mut buf[0..len])
+            .expect("Failed to read!");
     }
 
     pub fn read_id(&mut self) -> std::io::Result<u16> {

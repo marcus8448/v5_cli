@@ -4,7 +4,7 @@ pub enum Error {
     Generic(&'static str),
     InvalidId(u8),
     InvalidName(String),
-    Unknown
+    Unknown,
 }
 
 impl From<std::io::Error> for Error {

@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::ops::Index;
 use std::pin::Pin;
-use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
-use v5_core::clap::builder::{NonEmptyStringValueParser};
+use v5_core::clap::builder::NonEmptyStringValueParser;
+use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
+use v5_core::error::Error;
 use v5_core::log::{error, info};
 use v5_core::plugin::{Plugin, PORT};
 use v5_core::serial::system::{Brain, KernelVariable};
-use v5_core::error::Error;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -32,8 +32,7 @@ const VARIABLE: &str = "variable";
 const VALUE: &str = "value";
 const CAPTURE: &str = "capture";
 
-pub struct ManagePlugin {
-}
+pub struct ManagePlugin {}
 
 impl ManagePlugin {
     pub fn default() -> Self {
@@ -46,62 +45,113 @@ impl Plugin for ManagePlugin {
         MANAGE
     }
 
-    fn create_commands(&self, command: Command, registry: &mut HashMap<&'static str, Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>>) -> Command {
+    fn create_commands(
+        &self,
+        command: Command,
+        registry: &mut HashMap<
+            &'static str,
+            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
+        >,
+    ) -> Command {
         registry.insert(MANAGE, Box::new(|f| Box::pin(manage(f))));
-        command.subcommand(Command::new(MANAGE)
-            .about("Manage the robot brain")
-            .subcommand(Command::new(STATUS))
-            .subcommand(Command::new(METADATA)
-                .arg(Arg::new(FILE_NAME)
-                    .index(1)
-                    .value_parser(NonEmptyStringValueParser::new())
+        command.subcommand(
+            Command::new(MANAGE)
+                .about("Manage the robot brain")
+                .help_expected(true)
+                .subcommand(
+                    Command::new(STATUS)
+                        .about("Get the status of the robot brain")
                 )
-            )
-            .subcommand(Command::new(LIST_FILES))
-            .subcommand(Command::new(STOP))
-            .subcommand(Command::new(RUN)
-                .arg(Arg::new(SLOT)
-                    .index(1)
-                    .value_parser(value_parser!(u8).range(1..=8))
+                .subcommand(
+                    Command::new(METADATA)
+                        .about("Reads file metadata")
+                        .arg(
+                            Arg::new(FILE_NAME)
+                                .index(1)
+                                .value_parser(NonEmptyStringValueParser::new()),
+                        ),
                 )
-            )
-            .subcommand(Command::new(REMOVE_ALL_PROGRAMS))
-            .subcommand(Command::new(REMOVE_FILE)
-                .arg(Arg::new(FILE_NAME)
-                    .index(1)
-                    .value_parser(NonEmptyStringValueParser::new())
+                .subcommand(
+                    Command::new(LIST_FILES)
+                        .about("Lists all files on the brain")
                 )
-            )
-            .subcommand(Command::new(REMOVE_PROGRAM)
-                .arg(Arg::new(SLOT)
-                    .index(1)
-                    .value_parser(value_parser!(u8).range(1..=8))
+                .subcommand(
+                    Command::new(STOP)
+                        .about("Terminates a running program")
                 )
-            )
-            .subcommand(Command::new(CAPTURE))
-            .subcommand(Command::new(KERNEL_VARIABLE)
-                .subcommand(Command::new(GET)
-                    .arg(Arg::new(VARIABLE)
-                        .index(1)
-                        .value_parser(["team_number", "robot_name"])
-                    )
+                .subcommand(
+                    Command::new(RUN)
+                        .about("Starts a program on the robot")
+                        .arg(
+                            Arg::new(SLOT)
+                                .index(1)
+                                .required(true)
+                                .value_parser(value_parser!(u8).range(1..=8)),
+                    ),
                 )
-                .subcommand(Command::new(SET)
-                    .arg(Arg::new(VARIABLE)
-                        .index(1)
-                        .value_parser(["team_number", "robot_name"])
-                    )
-                    .arg(Arg::new(VALUE)
-                        .index(2)
-                    )
+                .subcommand(
+                    Command::new(REMOVE_ALL_PROGRAMS)
+                        .about("Deletes all programs from the robot")
                 )
-            )
+                .subcommand(
+                    Command::new(REMOVE_FILE)
+                        .about("Removes a file from the robot (by name)")
+                        .arg(
+                            Arg::new(FILE_NAME)
+                                .index(1)
+                                .value_parser(NonEmptyStringValueParser::new()),
+                    ),
+                )
+                .subcommand(
+                    Command::new(REMOVE_PROGRAM)
+                        .about("Removes a program from the robot (by slot)")
+                        .arg(
+                            Arg::new(SLOT)
+                                .index(1)
+                                .value_parser(value_parser!(u8).range(1..=8)),
+                    ),
+                )
+                .subcommand(
+                    Command::new(CAPTURE)
+                        .about("Captures a screenshot of the V5 brain's screen")
+                )
+                .subcommand(
+                    Command::new(KERNEL_VARIABLE)
+                        .about("Management of kernel variables")
+                        .help_expected(true)
+                        .subcommand(
+                            Command::new(GET)
+                                .about("Gets the value of a kernel variable")
+                                .arg(
+                                    Arg::new(VARIABLE)
+                                        .index(1)
+                                        .required(true)
+                                        .value_parser(["team_number", "robot_name"]),
+                            ),
+                        )
+                        .subcommand(
+                            Command::new(SET)
+                                .about("Sets the value of a kernel variable")
+                                .arg(
+                                    Arg::new(VARIABLE)
+                                        .index(1)
+                                        .required(true)
+                                        .value_parser(["team_number", "robot_name"]),
+                                )
+                                .arg(
+                                    Arg::new(VALUE)
+                                        .index(2)
+                                        .required(true)
+                                ),
+                        ),
+                ),
         )
     }
 }
 
 async fn manage(args: ArgMatches) {
-    let mut brain = v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
+    let mut brain =
+        v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
             STATUS => get_status(brain, args),
@@ -114,8 +164,9 @@ async fn manage(args: ArgMatches) {
             REMOVE_PROGRAM => remove_program(brain, args),
             KERNEL_VARIABLE => kernel_variable(brain, args),
             CAPTURE => capture_screen(brain, args),
-            _ => Err(Error::Generic("Invalid subcommand! (see `--help`)"))
-        }.unwrap()
+            _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
+        }
+        .unwrap()
     } else {
         error!("Missing subcommand (see `--help`)");
     }
@@ -158,9 +209,7 @@ fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
         match command {
             GET => get_kernel_variable(brain, args),
             SET => set_kernel_variable(brain, args),
-            _ => {
-                Err(Error::Generic("Invalid subcommand! (see `--help`)"))
-            }
+            _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
         }
     } else {
         Err(Error::Generic("Missing subcommand (see `--help`)"))
