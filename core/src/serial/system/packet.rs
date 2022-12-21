@@ -23,7 +23,9 @@ pub enum PacketId {
     GetSystemStatus = 0x22,
     SetProgramFileMetadata = 0x1A,
     DeleteFile = 0x1B,
-    GetFileSlot = 0x1C
+    GetFileSlot = 0x1C,
+    GetKernelVariable = 0x2E,
+    SetKernelVariable = 0x2F,
 }
 
 impl PacketId {
@@ -35,7 +37,8 @@ impl PacketId {
 pub struct PacketResponse {
     command: u8,
     payload: Vec<u8>,
-    data_start: u8
+    data_start: usize,
+    data_end: usize
 }
 
 impl PacketResponse {
@@ -48,7 +51,7 @@ impl PacketResponse {
     }
 
     pub fn get_data(&self) -> &[u8] {
-        &self.payload[(self.data_start as usize)..]
+        &self.payload[self.data_start..self.data_end]
     }
 }
 
@@ -108,6 +111,7 @@ pub trait Packet<'a> {
     fn write_f32(&mut self, value: u32) -> Result<()>;
     fn write_f64(&mut self, value: u64) -> Result<()>;
     fn write(&mut self, slice: &[u8]) -> Result<()>;
+    fn write_str(&mut self, string: &str, target_len: u16) -> Result<()>;
     fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()>;
     fn pad(&mut self, amount: u16) -> Result<()>;
     fn send(self) -> Result<PacketResponse>;
@@ -193,13 +197,22 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
         self.connection.raw.write(slice)?;
         Ok(())
     }
+
+    fn write_str(&mut self, string: &str, target_len: u16) -> Result<()> {
+        assert!(string.is_ascii());
+        assert!(string.len() < target_len as usize);
+        self.connection.raw.write(string.as_bytes())?;
+        self.connection.raw.write(std::slice::from_ref(&0))?; // null terminator
+        Ok(())
+    }
     
     fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
         assert!(string.is_ascii());
-        assert!(string.len() > 0);
-        assert!(string.len() <= target_len as usize);
-        self.write(string.as_bytes())?;
-        self.pad(target_len - string.len() as u16)?;
+        assert!(!string.contains('\0'));
+        assert!(string.len() < target_len as usize);
+        self.connection.raw.write(string.as_bytes())?;
+        self.connection.raw.write(std::slice::from_ref(&0))?; // null terminator
+        self.pad((target_len - 1) - string.len() as u16)?;
         Ok(())
     }
 
@@ -232,23 +245,25 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
         let command = payload[2];
         self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
         let mut len: u16 = payload[3] as u16;
-        let data_start: u8;
+        let data_start: usize;
         if command == 0x56 && len & 0x80 == 0x80 {
             self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
             len = ((len & 0x7f) << 8) + payload[4] as u16;
 
-            data_start = payload.len() as u8;
+            data_start = payload.len();
             payload.reserve(len as usize);
             self.connection.raw.read_exact(&mut payload[5..]).unwrap();
         } else {
-            data_start = payload.len() as u8;
+            data_start = payload.len();
             payload.reserve(len as usize);
             self.connection.raw.read_exact(&mut payload[4..]).unwrap();
         }
+        let data_end = payload.len();
         Ok(PacketResponse {
             command,
             payload,
-            data_start
+            data_start,
+            data_end
         })
     }
 }
@@ -333,13 +348,23 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         self.data.extend_from_slice(slice);
         Ok(())
     }
+
+    fn write_str(&mut self, string: &str, target_len: u16) -> Result<()> {
+        assert!(string.is_ascii());
+        assert!(!string.contains('\0'));
+        assert!(string.len() < target_len as usize);
+        self.data.extend_from_slice(string.as_bytes());
+        self.data.push(0); // null terminator
+        Ok(())
+    }
     
     fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
         assert!(string.is_ascii());
-        assert!(string.len() > 0);
-        assert!(string.len() <= target_len as usize);
-        self.write(string.as_bytes())?;
-        self.pad(target_len - string.len() as u16)?;
+        assert!(!string.contains('\0'));
+        assert!(string.len() < target_len as usize);
+        self.data.extend_from_slice(string.as_bytes());
+        self.data.push(0); // null terminator
+        self.pad((target_len - 1) - string.len() as u16)?;
         Ok(())
     }
 
@@ -378,16 +403,16 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         let command = payload[2];
         self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
         let mut len: u16 = payload[3] as u16;
-        let data_start: u8;
+        let data_start: usize;
         if command == 0x56 && len & 0x80 == 0x80 {
             self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
             len = ((len & 0x7f) << 8) + payload[4] as u16;
 
-            data_start = payload.len() as u8;
+            data_start = payload.len();
             payload.reserve(len as usize);
             self.connection.raw.read_exact(&mut payload[5..]).unwrap();
         } else {
-            data_start = payload.len() as u8;
+            data_start = payload.len();
             payload.reserve(len as usize);
             self.connection.raw.read_exact(&mut payload[4..]).unwrap();
         }
@@ -402,126 +427,13 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
 
         //todo: check length
 
+        let data_end = payload.len() - 2;
+
         Ok(PacketResponse {
             command,
             payload,
-            data_start
+            data_start,
+            data_end
         })
     }
 }
-
-/*
-    pub fn receive_packet(&mut self, timeout_millis: u64) -> io::Result<PacketResponse> {
-        let mut buf: [u8; 1] = [0];
-        let start = std::time::Instant::now();
-        self.connection.set_timeout(Duration::from_millis(timeout_millis)).unwrap();
-        let mut success = false;
-        while start.elapsed().as_millis() < timeout_millis as u128 {
-            self.connection.read_exact(&mut buf).unwrap();
-            if buf[0] != RESPONSE_HEADER[0] {
-                continue
-            }
-            self.connection.read_exact(&mut buf).unwrap();
-            if buf[0] != RESPONSE_HEADER[1] {
-                continue
-            }
-            success = true;
-            break
-        }
-        if !success {
-            return Err(io::Error::new(ErrorKind::InvalidData, "Packet header not found."));
-        }
-
-        self.connection.read_exact(&mut buf).unwrap();
-        let command = buf[0];
-        self.connection.read_exact(&mut buf).unwrap();
-        let mut len: u16 = buf[0] as u16;
-        let mut payload = Vec::new();
-        if command == 0x56 && len & 0x80 == 0x80 {
-            self.connection.read_exact(&mut buf).unwrap();
-            len = ((len & 0x7f) << 8) + buf[0] as u16;
-        }
-        payload.reserve(len as usize);
-        self.connection.read_exact(&mut payload).unwrap();
-        Ok(PacketResponse {
-            command,
-            payload
-        })
-    }
-
-    pub fn receive_packet_raw(&mut self, timeout_millis: u64) -> io::Result<PacketResponse> {
-        let mut payload = Vec::new();
-        payload.reserve(4);
-        let start = std::time::Instant::now();
-        self.connection.set_timeout(Duration::from_millis(timeout_millis)).unwrap();
-        let mut success = false;
-        while start.elapsed().as_millis() < timeout_millis as u128 {
-            self.connection.read_exact(&mut payload[0..1]).unwrap();
-            if payload[0] != RESPONSE_HEADER[0] {
-                continue
-            }
-            self.connection.read_exact(&mut payload[1..2]).unwrap();
-            if payload[1] != RESPONSE_HEADER[1] {
-                continue
-            }
-            success = true;
-            break
-        }
-        if !success {
-            return Err(io::Error::new(ErrorKind::InvalidData, "Packet header not found."));
-        }
-
-        self.connection.read_exact(&mut payload[2..3]).unwrap();
-        let command = payload[2];
-        self.connection.read_exact(&mut payload[3..4]).unwrap();
-        let mut len: u16 = payload[3] as u16;
-        let mut payload = Vec::new();
-        if command == 0x56 && len & 0x80 == 0x80 {
-            self.connection.read_exact(&mut payload[4..5]).unwrap();
-            len = ((len & 0x7f) << 8) + payload[4] as u16;
-
-            payload.reserve(len as usize);
-            self.connection.read_exact(&mut payload[5..]).unwrap();
-        } else {
-            payload.reserve(len as usize);
-            self.connection.read_exact(&mut payload[4..]).unwrap();
-        }
-        Ok(PacketResponse {
-            command,
-            payload
-        })
-    }
-
-    pub fn receive_extended_packet(&mut self, timeout_millis: u64) -> io::Result<PacketResponse> {
-        let mut payload = Vec::new();
-        payload.reserve(4);
-        let start = std::time::Instant::now();
-        self.connection.set_timeout(Duration::from_millis(timeout_millis)).unwrap();
-        let mut success = false;
-        while start.elapsed().as_millis() < timeout_millis as u128 {
-            self.connection.read_exact(&mut payload[..1]).unwrap();
-            if payload[0] != RESPONSE_HEADER[0] {
-                continue
-            }
-            self.connection.read_exact(&mut payload[..2]).unwrap();
-            if payload[1] != RESPONSE_HEADER[1] {
-                continue
-            }
-            success = true;
-            break
-        }
-        if !success {
-            return Err(io::Error::new(ErrorKind::InvalidData, "Packet header not found."));
-        }
-
-        self.connection.read_exact(&mut payload[2..4]).unwrap();
-        let command = payload[2];
-        let len = payload[3];
-        payload.reserve(len as usize);
-        self.connection.read_exact(&mut payload).unwrap();
-        Ok(PacketResponse {
-            command,
-            payload
-        })
-    }
-    */

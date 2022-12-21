@@ -7,10 +7,8 @@ use chrono::{DateTime, FixedOffset, Local, NaiveDateTime};
 use serialport::SerialPort;
 use packet::{PacketId};
 use crate::serial::system::packet::{BasicPacket, ExtendedPacket, Packet, PacketResponse};
-use crate::serial::error::Error;
-use crate::serial::error::Error::InvalidId;
+use crate::error::Error;
 
-const TEN_MILLIS: Duration = Duration::from_millis(10);
 pub const EPOCH_MS_TO_JAN_1_2000: i64 = 946684800000;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -21,13 +19,12 @@ pub enum FileType {
 }
 
 impl FileType {
-    pub fn get_name(&self) -> &'static str {
+    fn get_name(&self) -> &'static str {
         match self {
             Self::Bin => "bin",
             Self::Ini => "ini"
         }
-    }
-}
+    }}
 
 impl TryFrom<&str> for FileType {
     type Error = Error;
@@ -36,15 +33,22 @@ impl TryFrom<&str> for FileType {
         match value {
             "bin" => Ok(Self::Bin),
             "ini" => Ok(Self::Ini),
-            _ => Err(InvalidId(255))
+            value => Err(Error::InvalidName(value.to_string()))
         }
     }
 }
 
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum Product {
     Brain = 0x10,
     Controller = 0x11
+}
+
+impl Product {
+    fn get_id(&self) -> u8 {
+        *self as u8
+    }
 }
 
 impl TryFrom<u8> for Product {
@@ -59,11 +63,25 @@ impl TryFrom<u8> for Product {
     }
 }
 
+impl Into<u8> for Product {
+    fn into(self) -> u8 {
+        self as u8
+    }
+}
+
+
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum UploadAction {
     Nothing = 0b0,
     Run = 0b01,
     RunScreen = 0b11,
+}
+
+impl UploadAction {
+    pub fn get_id(&self) {
+        *self as u8;
+    }
 }
 
 impl Default for UploadAction {
@@ -80,25 +98,40 @@ impl TryFrom<&str> for UploadAction {
             "nothing" => Ok(Self::Nothing),
             "run" => Ok(Self::Run),
             "screen" => Ok(Self::RunScreen),
-            _ => Err(InvalidId(255))
+            value => Err(Error::InvalidName(value.to_string()))
         }
     }
 }
 
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum TransferDirection {
     Upload = 1,
     Download = 2
 }
 
+impl TransferDirection {
+    fn get_id(&self) -> u8 {
+        *self as u8
+    }
+}
+
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum TransferTarget {
     DDR = 0,
     Flash = 1,
     Screen = 2
 }
 
+impl TransferTarget {
+    fn get_id(&self) -> u8 {
+        *self as u8
+    }
+}
+
 #[repr(u16)]
+#[derive(Copy, Clone)]
 pub enum Vid {
     User = 1,
     System = 15,
@@ -108,8 +141,8 @@ pub enum Vid {
 }
 
 impl Vid {
-    pub fn id(self) -> u8 {
-        return self as u8;
+    pub fn get_id(&self) -> u8 {
+        return *self as u8;
     }
 }
 
@@ -128,6 +161,62 @@ impl TryFrom<u8> for Vid {
     }
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone)]
+pub enum KernelVariable {
+    TeamNumber = 7,
+    RobotName = 16
+}
+
+impl KernelVariable {
+    pub fn get_max_len(&self) -> u8 {
+        match self {
+            Self::TeamNumber => 7,
+            Self::RobotName => 16
+        }
+    }
+}
+
+impl KernelVariable {
+    fn get_id(&self) -> u8 {
+        *self as u8
+    }
+}
+
+impl TryFrom<u8> for KernelVariable {
+    type Error = Error;
+
+    fn try_from(id: u8) -> Result<Self> {
+        match id {
+            7 => Ok(Self::TeamNumber),
+            16 => Ok(Self::RobotName),
+            i => Err(Error::InvalidId(i))
+        }
+    }
+}
+
+impl TryFrom<&str> for KernelVariable {
+    type Error = Error;
+
+    fn try_from(id: &str) -> Result<Self> {
+        match id.to_lowercase().as_str() {
+            "team_number" => Ok(Self::TeamNumber),
+            "robot_name" => Ok(Self::RobotName),
+            s => Err(Error::InvalidName(s.to_string()))
+        }
+    }
+}
+impl TryFrom<String> for KernelVariable {
+    type Error = Error;
+
+    fn try_from(id: String) -> Result<Self> {
+        match id.to_lowercase().as_str() {
+            "team_number" => Ok(Self::TeamNumber),
+            "robot_name" => Ok(Self::RobotName),
+            _ => Err(Error::InvalidName(id))
+        }
+    }
+}
 
 #[repr(u8)]
 pub enum Channel {
@@ -197,7 +286,7 @@ impl Brain {
         assert!(name.len() > 0);
 
         let mut packet = self.connection.begin_extended_sized_packet(PacketId::GetFileMetadataByName, 26);
-        packet.write_u8(vid.id())?;
+        packet.write_u8(vid.get_id())?;
         packet.write_padded_str(name, 24)?;
 
         let response = packet.send()?;
@@ -230,7 +319,7 @@ impl Brain {
 
     pub fn link_file_transfer(&mut self, name: &str, vid: Vid) -> Result<PacketResponse> {
         let mut packet = self.connection.begin_extended_sized_packet(PacketId::SetFileTransferLink, 1);
-        packet.write_u8(vid.id())?;
+        packet.write_u8(vid.get_id())?;
         packet.write_u8(0)?;
         packet.write_padded_str(name, 24)?;
         Ok(packet.send()?)
@@ -247,7 +336,7 @@ impl Brain {
         packet.write_u32(length)?;
         packet.write_u32(address)?;
         packet.write_u32(crc)?;
-        packet.write(&file_type.get_name().as_bytes())?;
+        packet.write_str(&file_type.get_name(), 4)?;
         packet.write_u32(((&timestamp.timestamp_millis() - EPOCH_MS_TO_JAN_1_2000) as u32) / 1000)?;
         packet.write_u32(version)?;
         packet.write_padded_str(name, 24)?;
@@ -284,6 +373,21 @@ impl Brain {
             product: Product::try_from(payload[5])?,
             flag: payload[6]
         })
+    }
+
+    pub fn get_kernel_variable(&mut self, variable: KernelVariable) -> Result<String> {
+        let mut packet = self.connection.begin_extended_sized_packet(PacketId::GetKernelVariable, 1);
+        packet.write_u8(variable.get_id())?;
+        Ok(std::str::from_utf8(packet.send()?.get_data()).unwrap().trim_end_matches('\0').to_string())
+    }
+
+    pub fn set_kernel_variable(&mut self, variable: KernelVariable, value: &str) -> Result<String> {
+        assert!(value.is_ascii());
+        assert!(value.len() < variable.get_max_len() as usize);
+        let mut packet = self.connection.begin_extended_sized_packet(PacketId::SetKernelVariable, (1 + value.len() + 1) as u16);
+        packet.write_u8(variable.get_id())?;
+        packet.write_str(value, variable.get_max_len() as u16)?;
+        Ok(std::str::from_utf8(packet.send()?.get_data()).unwrap().trim_end_matches('\0').to_string())
     }
 }
 

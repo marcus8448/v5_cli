@@ -7,9 +7,8 @@ edition = "2021"
 [dependencies]
 v5_core = { path = "../core" }
 v5_upload = { path = "../upload" }
+v5_manage = { path = "../manage" }
 v5_terminal = { path = "../terminal" }
-env_logger = "0.9.0"
+env_logger = "0.10"
 libloading = "0.7"
-rand = "0.8"
 serialport = "4.2"
-tokio = { version = "1.22", features = [ "rt-multi-thread", "tokio-macros" ]}

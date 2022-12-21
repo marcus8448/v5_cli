@@ -3,6 +3,7 @@ pub enum Error {
     IO(std::io::Error),
     Generic(&'static str),
     InvalidId(u8),
+    InvalidName(String),
     Unknown
 }
 

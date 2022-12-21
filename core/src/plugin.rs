@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use clap::{ArgMatches, Command};
 use libloading::Symbol;
+use log::error;
 
 #[no_mangle]
 pub static mut DEFAULT_PLUGIN_REF: Option<Box<unsafe extern fn (plugins: &mut Vec<Box<dyn Plugin>>)>> = None;
+pub const PORT: &str = "port";
 
 #[macro_export]
 macro_rules! export_plugin {
@@ -19,7 +23,7 @@ macro_rules! export_plugin {
 
 pub trait Plugin {
     fn get_name(&self) -> &'static str;
-    fn create_commands(&self, command: Command, registry: &mut HashMap<&'static str, fn(ArgMatches)>) -> Command;
+    fn create_commands(&self, command: Command, registry: &mut HashMap<&'static str, Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>>) -> Command;
 }
 
 pub fn load_plugins() -> Vec<Box<dyn Plugin>> {
@@ -42,7 +46,7 @@ pub fn load_plugins() -> Vec<Box<dyn Plugin>> {
                 plugins.push((libloading::Library::new(entry.file_name()).expect("Failed to load plugin!").get(b"register_plugin\0").unwrap() as Symbol<unsafe extern fn () -> Box<dyn Plugin>>)())
             }
         } else {
-            println!("Failed to read plugin: {}", entry.unwrap_err());
+            error!("Failed to read plugin: {}", entry.unwrap_err());
         }
     }
     plugins

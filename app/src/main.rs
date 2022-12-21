@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command};
+use v5_core::log::error;
 use v5_core::plugin::Plugin;
+use v5_core::tokio;
 
 fn main() {
     let mut command = Command::new("robot")
@@ -24,7 +28,7 @@ fn main() {
     }
 
     let plugins = v5_core::plugin::load_plugins();
-    let mut registry = HashMap::<&'static str, fn(ArgMatches)>::new();
+    let mut registry = HashMap::<&'static str, Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>>::new();
     for plugin in plugins {
         command = plugin.create_commands(command, &mut registry);
     }
@@ -33,13 +37,17 @@ fn main() {
     match matches.subcommand() {
         None => {
             if let Ok(path) = std::env::current_exe() {
-                println!("No subcommand provided!\nUse `{} --help` to see usage.", path.file_name().unwrap().to_str().unwrap());
+                error!("No subcommand provided!\nUse `{} --help` to see usage.", path.file_name().unwrap().to_str().unwrap());
             } else {
-                println!("No subcommand provided!\nUse `<program> --help` to see usage.");
+                error!("No subcommand provided!\nUse `<program> --help` to see usage.");
             }
         }
         Some((name, matches)) => {
-            registry.get(name).unwrap()(matches.clone());
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(registry.get(name).unwrap()(matches.clone()));
         }
     }
 }
@@ -47,4 +55,5 @@ fn main() {
 #[no_mangle]
 unsafe extern fn register_default_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
     plugins.push(Box::new(v5_upload::UploadPlugin::default()));
+    plugins.push(Box::new(v5_manage::ManagePlugin::default()));
 }

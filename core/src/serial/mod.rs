@@ -1,8 +1,8 @@
 pub mod system;
 pub mod program;
-pub mod error;
 
 use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
+use log::info;
 use serialport::{DataBits, Parity, SerialPort, SerialPortType};
 
 pub const CRC16: Crc::<u16> = Crc::<u16>::new(&CRC_16_IBM_3740);
@@ -39,7 +39,7 @@ pub fn print_out_ports(port_type: Option<PortType>) {
     for p in serialport::available_ports().expect("Failed to obtain list of ports!") {
         if let SerialPortType::UsbPort(info) = p.port_type {
             if info.pid == 0x0501 && info.vid == 0x2888 && (port_type.is_none() || port_type.as_ref().unwrap().match_name(&p.port_name)) {
-                println!("{}: {} {} ({} by {})", p.port_name, info.pid, info.vid, info.product.unwrap_or_default(), info.manufacturer.unwrap_or_default());
+                info!("{}: {} {} ({} by {})", p.port_name, info.pid, info.vid, info.product.unwrap_or_default(), info.manufacturer.unwrap_or_default());
             }
         }
     }
