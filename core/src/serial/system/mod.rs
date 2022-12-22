@@ -42,31 +42,35 @@ impl TryFrom<&str> for FileType {
 #[repr(u8)]
 #[derive(Copy, Clone)]
 pub enum Product {
-    Brain = 0x10,
-    Controller = 0x11,
+    Brain,
+    Controller {
+        connected: bool
+    },
 }
 
 impl Product {
-    fn get_id(&self) -> u8 {
-        *self as u8
-    }
-}
-
-impl TryFrom<u8> for Product {
-    type Error = Error;
-
-    fn try_from(id: u8) -> Result<Self> {
+    fn parse(id: u8, flag: u8) -> Result<Self> {
         match id {
             0x10 => Ok(Self::Brain),
-            0x11 => Ok(Self::Controller),
-            i => Err(Error::InvalidId(i)),
+            0x11 => Ok(Self::Controller { connected: flag & 0b10 == 0b10 }),
+            id => Err(Error::InvalidId(id))
         }
     }
-}
 
-impl Into<u8> for Product {
-    fn into(self) -> u8 {
-        self as u8
+    fn get_id(&self) -> u8 {
+        match &self {
+            Self::Brain => 0x10,
+            Self::Controller { .. } => 0x11
+        }
+    }
+
+    fn get_name(&self) -> &'static str {
+        match self {
+            Self::Brain => "Brain",
+            Self::Controller { connected: true } => "Controller (Connected)",
+            Self::Controller { connected: false } => "Controller (Disconnected)",
+            _ => unreachable!()
+        }
     }
 }
 
@@ -266,8 +270,24 @@ pub struct SystemVersion {
     patch: u8,
     a: u8,
     b: u8,
-    product: Product,
-    flag: u8,
+    product: Product
+}
+
+impl SystemVersion {
+    pub fn get_version(&self) -> String {
+        format!("{}.{}.{}-{}.{}", self.major, self.minor, self.patch, self.a, self.b)
+    }
+
+    pub fn get_product(&self) -> &Product {
+        &self.product
+    }
+
+    pub fn is_brain_available(&self) -> bool {
+        match self.product {
+            Product::Brain => true,
+            Product::Controller { connected } => connected
+        }
+    }
 }
 
 impl Brain {
@@ -439,8 +459,7 @@ impl Brain {
             patch: payload[2],
             a: payload[3],
             b: payload[4],
-            product: Product::try_from(payload[5])?,
-            flag: payload[6],
+            product: Product::parse(payload[5], payload[6])?
         })
     }
 

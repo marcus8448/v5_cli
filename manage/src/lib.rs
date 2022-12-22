@@ -154,61 +154,61 @@ async fn manage(args: ArgMatches) {
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
-            STATUS => get_status(brain, args),
-            METADATA => get_metadata(brain, args),
-            LIST_FILES => list_files(brain, args),
-            STOP => stop_execution(brain, args),
-            RUN => execute_program(brain, args),
-            REMOVE_ALL_PROGRAMS => remove_all_programs(brain, args),
-            REMOVE_FILE => remove_file(brain, args),
-            REMOVE_PROGRAM => remove_program(brain, args),
-            KERNEL_VARIABLE => kernel_variable(brain, args),
-            CAPTURE => capture_screen(brain, args),
+            STATUS => get_status(brain, args).await,
+            METADATA => get_metadata(brain, args).await,
+            LIST_FILES => list_files(brain, args).await,
+            STOP => stop_execution(brain, args).await,
+            RUN => execute_program(brain, args).await,
+            REMOVE_ALL_PROGRAMS => remove_all_programs(brain, args).await,
+            REMOVE_FILE => remove_file(brain, args).await,
+            REMOVE_PROGRAM => remove_program(brain, args).await,
+            KERNEL_VARIABLE => kernel_variable(brain, args).await,
+            CAPTURE => capture_screen(brain, args).await,
             _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
-        }
-        .unwrap()
+        }.unwrap()
     } else {
         error!("Missing subcommand (see `--help`)");
     }
 }
 
-fn get_status(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn get_status(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+
     Ok(())
 }
 
-fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn stop_execution(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn stop_execution(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
-            GET => get_kernel_variable(brain, args),
-            SET => set_kernel_variable(brain, args),
+            GET => get_kernel_variable(brain, args).await,
+            SET => set_kernel_variable(brain, args).await,
             _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
         }
     } else {
@@ -216,14 +216,14 @@ fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     }
 }
 
-fn get_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn get_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = brain.get_kernel_variable(variable)?;
     info!("{}", value);
     Ok(())
 }
 
-fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = args.get_one::<String>(VALUE).unwrap();
     let actual_value = brain.set_kernel_variable(variable, value.as_str())?;
@@ -232,6 +232,6 @@ fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn capture_screen(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn capture_screen(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
