@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::ops::Index;
 use std::pin::Pin;
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
 use v5_core::error::Error;
-use v5_core::log::{error, info};
+use v5_core::log::error;
 use v5_core::plugin::{Plugin, PORT};
-use v5_core::serial::system::{Brain, KernelVariable};
+use v5_core::serial::system::{Brain, KernelVariable, Vid};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -19,6 +18,8 @@ const STATUS: &str = "status";
 const METADATA: &str = "metadata";
 const LIST_FILES: &str = "ls_files";
 const FILE_NAME: &str = "file_name";
+const VID: &str = "vid";
+const OPTION: &str = "option";
 const STOP: &str = "stop";
 const RUN: &str = "run";
 const SLOT: &str = "slot";
@@ -58,10 +59,7 @@ impl Plugin for ManagePlugin {
             Command::new(MANAGE)
                 .about("Manage the robot brain")
                 .help_expected(true)
-                .subcommand(
-                    Command::new(STATUS)
-                        .about("Get the status of the robot brain")
-                )
+                .subcommand(Command::new(STATUS).about("Get the status of the robot brain"))
                 .subcommand(
                     Command::new(METADATA)
                         .about("Reads file metadata")
@@ -69,16 +67,22 @@ impl Plugin for ManagePlugin {
                             Arg::new(FILE_NAME)
                                 .index(1)
                                 .value_parser(NonEmptyStringValueParser::new()),
+                        )
+                        .arg(
+                            Arg::new(VID)
+                                .short('v')
+                                .default_value("1")
+                                .value_parser(value_parser!(u8)),
+                        )
+                        .arg(
+                            Arg::new(OPTION)
+                                .short('o')
+                                .default_value("0")
+                                .value_parser(value_parser!(u8)),
                         ),
                 )
-                .subcommand(
-                    Command::new(LIST_FILES)
-                        .about("Lists all files on the brain")
-                )
-                .subcommand(
-                    Command::new(STOP)
-                        .about("Terminates a running program")
-                )
+                .subcommand(Command::new(LIST_FILES).about("Lists all files on the brain"))
+                .subcommand(Command::new(STOP).about("Terminates a running program"))
                 .subcommand(
                     Command::new(RUN)
                         .about("Starts a program on the robot")
@@ -87,11 +91,23 @@ impl Plugin for ManagePlugin {
                                 .index(1)
                                 .required(true)
                                 .value_parser(value_parser!(u8).range(1..=8)),
-                    ),
+                        )
+                        .arg(
+                            Arg::new(VID)
+                                .short('v')
+                                .default_value("1")
+                                .value_parser(value_parser!(u8)),
+                        ),
                 )
                 .subcommand(
                     Command::new(REMOVE_ALL_PROGRAMS)
                         .about("Deletes all programs from the robot")
+                        .arg(
+                            Arg::new(VID)
+                                .short('v')
+                                .default_value("1")
+                                .value_parser(value_parser!(u8)),
+                        ),
                 )
                 .subcommand(
                     Command::new(REMOVE_FILE)
@@ -100,7 +116,13 @@ impl Plugin for ManagePlugin {
                             Arg::new(FILE_NAME)
                                 .index(1)
                                 .value_parser(NonEmptyStringValueParser::new()),
-                    ),
+                        )
+                        .arg(
+                            Arg::new(VID)
+                                .short('v')
+                                .default_value("1")
+                                .value_parser(value_parser!(u8)),
+                        ),
                 )
                 .subcommand(
                     Command::new(REMOVE_PROGRAM)
@@ -109,11 +131,16 @@ impl Plugin for ManagePlugin {
                             Arg::new(SLOT)
                                 .index(1)
                                 .value_parser(value_parser!(u8).range(1..=8)),
-                    ),
+                        )
+                        .arg(
+                            Arg::new(VID)
+                                .short('v')
+                                .default_value("1")
+                                .value_parser(value_parser!(u8)),
+                        ),
                 )
                 .subcommand(
-                    Command::new(CAPTURE)
-                        .about("Captures a screenshot of the V5 brain's screen")
+                    Command::new(CAPTURE).about("Captures a screenshot of the V5 brain's screen"),
                 )
                 .subcommand(
                     Command::new(KERNEL_VARIABLE)
@@ -127,7 +154,7 @@ impl Plugin for ManagePlugin {
                                         .index(1)
                                         .required(true)
                                         .value_parser(["team_number", "robot_name"]),
-                            ),
+                                ),
                         )
                         .subcommand(
                             Command::new(SET)
@@ -138,11 +165,7 @@ impl Plugin for ManagePlugin {
                                         .required(true)
                                         .value_parser(["team_number", "robot_name"]),
                                 )
-                                .arg(
-                                    Arg::new(VALUE)
-                                        .index(2)
-                                        .required(true)
-                                ),
+                                .arg(Arg::new(VALUE).index(2).required(true)),
                         ),
                 ),
         )
@@ -165,42 +188,98 @@ async fn manage(args: ArgMatches) {
             KERNEL_VARIABLE => kernel_variable(brain, args).await,
             CAPTURE => capture_screen(brain, args).await,
             _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
-        }.unwrap()
+        }
+        .unwrap()
     } else {
         error!("Missing subcommand (see `--help`)");
     }
 }
 
 async fn get_status(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-
+    let status = brain.get_system_status()?;
+    println!(
+        "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
+        status.get_system_version(),
+        status.get_cpu0_version(),
+        status.get_cpu1_version(),
+        status.get_touch_version(),
+        status.get_system_id()
+    );
     Ok(())
 }
 
 async fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    let metadata = brain.read_file_metadata(
+        args.get_one::<String>(FILE_NAME)
+            .expect("missing file name!")
+            .as_str(),
+        Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
+    )?;
+    println!(
+        "Name: {}\nVid: {}\nSize: {}\nAddress: {}\n CRC: {}\nFile Type: {}\nTimestamp: {}",
+        metadata.name,
+        metadata.vid,
+        metadata.size,
+        metadata.addr,
+        metadata.crc,
+        metadata.file_type,
+        metadata.timestamp.format("%+")
+    );
     Ok(())
 }
 
 async fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    let amount = brain.get_directory_count(
+        Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
+        *args.get_one::<u8>(OPTION).unwrap_or(&0),
+    )?;
+    for i in 0..amount {
+        println!("{}\n--", brain.get_file_metadata_by_index(i as u8, 0)?);
+    }
     Ok(())
 }
 
 async fn stop_execution(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    brain.execute_program(Vid::User, 0, "")?;
     Ok(())
 }
 
 async fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
+    let slot = *args.get_one::<u8>(SLOT).expect("no slot provided");
+    brain.execute_program(vid, 0x80, format!("slot_{}.bin", slot).as_str())?;
     Ok(())
 }
 
 async fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
+    let c = brain.get_directory_count(vid, 0)?;
+    let mut vec = Vec::new();
+    vec.reserve(c as usize);
+    for i in 0..c {
+        vec.push(brain.get_file_metadata_by_index(i as u8, 0)?.name);
+    }
+    for name in vec {
+        brain.delete_file(vid, 0, &name)?;
+    }
     Ok(())
 }
 
 async fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
+    let name = args
+        .get_one::<String>(FILE_NAME)
+        .expect("missing name")
+        .clone();
+    brain.delete_file(vid, 0, &name)?;
     Ok(())
 }
 
 async fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
+    let slot = *args.get_one::<u8>(SLOT).expect("missing slot");
+    brain.delete_file(vid, 0, &format!("slot_{}.bin", slot))?;
+    brain.delete_file(vid, 0, &format!("slot_{}.ini", slot))?;
     Ok(())
 }
 
@@ -219,7 +298,7 @@ async fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
 async fn get_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = brain.get_kernel_variable(variable)?;
-    info!("{}", value);
+    println!("{}", value);
     Ok(())
 }
 
@@ -228,7 +307,7 @@ async fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> 
     let value = args.get_one::<String>(VALUE).unwrap();
     let actual_value = brain.set_kernel_variable(variable, value.as_str())?;
 
-    info!("{}", actual_value);
+    println!("{}", actual_value);
     Ok(())
 }
 

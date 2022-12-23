@@ -1,5 +1,5 @@
 use clap::{ArgMatches, Command};
-use libloading::Symbol;
+use libloading::Library;
 use log::error;
 use std::collections::HashMap;
 use std::future::Future;
@@ -10,6 +10,7 @@ use std::pin::Pin;
 pub static mut DEFAULT_PLUGIN_REF: Option<
     Box<unsafe extern "C" fn(plugins: &mut Vec<Box<dyn Plugin>>)>,
 > = None;
+static mut EXTERNAL_LIBRARIES: Vec<Library> = Vec::new(); // We DO NOT want to drop the library
 pub const PORT: &str = "port";
 
 #[macro_export]
@@ -59,12 +60,14 @@ pub fn load_plugins() -> Vec<Box<dyn Plugin>> {
     for entry in std::fs::read_dir(path).unwrap() {
         if let Ok(entry) = entry {
             unsafe {
-                plugins.push((libloading::Library::new(entry.file_name())
-                    .expect("Failed to load plugin!")
-                    .get(b"register_plugin\0")
-                    .unwrap()
-                    as Symbol<unsafe extern "C" fn() -> Box<dyn Plugin>>)(
-                ))
+                let library = Library::new(entry.path()).expect("Failed to load plugin!");
+
+                plugins.push((library
+                    .get::<unsafe extern "C" fn() -> Box<dyn Plugin>>(b"register_plugin\0")
+                    .expect("Failed to find exported plugin!"))(
+                ));
+
+                EXTERNAL_LIBRARIES.push(library);
             }
         } else {
             error!("Failed to read plugin: {}", entry.unwrap_err());

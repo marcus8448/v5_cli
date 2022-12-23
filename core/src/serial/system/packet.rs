@@ -1,6 +1,6 @@
 use crate::serial::system::Connection;
 use crate::serial::CRC16;
-use std::io::{Result, Write};
+use std::io::{Error, ErrorKind, Result, Write};
 
 const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
@@ -26,6 +26,8 @@ pub enum PacketId {
     GetFileSlot = 0x1C,
     GetKernelVariable = 0x2E,
     SetKernelVariable = 0x2F,
+
+    ManageCompetition = 0xC1,
 }
 
 impl PacketId {
@@ -249,7 +251,7 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
         self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
         let mut len: u16 = payload[3] as u16;
         let data_start: usize;
-        if command == 0x56 && len & 0x80 == 0x80 {
+        if command == EXT_PACKET_ID && len & 0x80 == 0x80 {
             self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
             len = ((len & 0x7f) << 8) + payload[4] as u16;
 
@@ -412,7 +414,7 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
         let mut len: u16 = payload[3] as u16;
         let data_start: usize;
-        if command == 0x56 && len & 0x80 == 0x80 {
+        if command == EXT_PACKET_ID && len & 0x80 == 0x80 {
             self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
             len = ((len & 0x7f) << 8) + payload[4] as u16;
 
@@ -430,7 +432,10 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         assert_eq!(CRC16.checksum(&payload), 0);
 
         if let Some(nack) = Nack::maybe_find(payload[(data_start + 1) as usize]) {
-            panic!("nack!") //todo
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                format!("NACK: {}", nack as u8),
+            ));
         }
 
         //todo: check length

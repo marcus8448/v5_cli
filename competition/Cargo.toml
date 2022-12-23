@@ -1,0 +1,13 @@
+[package]
+name = "v5_competition"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = [ "dylib" ]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+v5_core = { path = "../core" }
+cursive = { version = "0.20", default-features = false, features = [ "crossterm-backend" ] }

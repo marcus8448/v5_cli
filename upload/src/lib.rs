@@ -187,7 +187,7 @@ async fn upload_program(args: ArgMatches) {
             crc,
             overwrite,
             timestamp,
-            Some((&cold_hash[..24], Vid::Pros)),
+            Some((&cold_hash[..24], Vid::V5Cli)),
             action,
         )
         .unwrap();

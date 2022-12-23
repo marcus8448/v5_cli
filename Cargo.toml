@@ -1,2 +1,2 @@
 [workspace]
-members = ["core", "upload", "manage", "terminal", "app"]
+members = ["core", "upload", "manage", "terminal", "competition", "app"]
