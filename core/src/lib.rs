@@ -6,4 +6,5 @@ pub extern crate clap;
 pub extern crate crc;
 pub extern crate log;
 pub extern crate serialport;
+pub extern crate time;
 pub extern crate tokio;

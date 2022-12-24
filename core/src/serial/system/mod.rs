@@ -2,14 +2,18 @@ pub mod packet;
 
 use crate::error::Error;
 use crate::serial::system::packet::{BasicPacket, ExtendedPacket, Packet, PacketResponse};
-use chrono::{DateTime, FixedOffset, Local, NaiveDateTime};
 use packet::PacketId;
 use serialport::SerialPort;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::io::Write;
+use std::ops::{Add, Sub};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use clap::builder::via_prelude;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
-pub const EPOCH_MS_TO_JAN_1_2000: i64 = 946684800000;
+pub const EPOCH_MS_TO_JAN_1_2000: u64 = 946684800000;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -303,7 +307,7 @@ pub struct FileMetadata {
     pub addr: u32,
     pub crc: u32,
     pub file_type: String,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
     pub name: String,
 }
 
@@ -313,7 +317,7 @@ pub struct FileMetadata2 {
     pub addr: u32,
     pub crc: u32,
     pub file_type: String,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
     pub version: String,
     pub name: String,
 }
@@ -323,7 +327,7 @@ impl Display for FileMetadata2 {
         write!(
             f,
             "Name: {}\nVersion: {}\nSize: {}\nAddress: {}\nCRC: {}\nFile Type: {}\nTimestamp: {}",
-            self.name, self.version, self.size, self.addr, self.crc, self.file_type, self.timestamp
+            self.name, self.version, self.size, self.addr, self.crc, self.file_type, OffsetDateTime::from(self.timestamp).format(&Rfc3339).unwrap()
         )
     }
 }
@@ -465,14 +469,7 @@ impl Brain {
         let file_type = std::str::from_utf8(&payload[13..17])?
             .trim_end_matches('\0')
             .to_string();
-        let timestamp = DateTime::<Local>::from_local(
-            NaiveDateTime::from_timestamp_millis(
-                (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as i64) * 1000_i64
-                    + EPOCH_MS_TO_JAN_1_2000,
-            )
-            .unwrap(),
-            FixedOffset::west_opt(0).unwrap(),
-        );
+        let timestamp = UNIX_EPOCH.add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000)).add(Duration::from_millis((u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64));
         let name = u32::from_le_bytes(payload[21..45].try_into().unwrap()).to_string();
         Ok(FileMetadata {
             vid,
@@ -495,7 +492,7 @@ impl Brain {
         address: u32,
         crc: u32,
         overwrite: bool,
-        timestamp: DateTime<Local>,
+        timestamp: SystemTime,
         linked_file: Option<(&str, Vid)>,
         action: UploadAction,
     ) -> Result<()> {
@@ -548,7 +545,7 @@ impl Brain {
         version: u32,
         file_type: FileType,
         name: &str,
-        timestamp: DateTime<Local>,
+        timestamp: SystemTime,
     ) -> Result<UploadMeta> {
         assert!(name.len() <= 24);
         assert!(name.len() > 0);
@@ -563,8 +560,7 @@ impl Brain {
         packet.write_u32(address)?;
         packet.write_u32(crc)?;
         packet.write_str(&file_type.get_name(), 4)?;
-        packet
-            .write_u32(((&timestamp.timestamp_millis() - EPOCH_MS_TO_JAN_1_2000) as u32) / 1000)?;
+        packet.write_u32((&timestamp.duration_since(UNIX_EPOCH)?.sub(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000)).as_millis() / 1000) as u32)?;
         packet.write_u32(version)?;
         packet.write_padded_str(name, 24)?;
         let response = packet.send()?;
@@ -676,14 +672,7 @@ impl Brain {
         let file_type = std::str::from_utf8(&payload[13..17])?
             .trim_end_matches('\0')
             .to_string();
-        let timestamp = DateTime::<Local>::from_local(
-            NaiveDateTime::from_timestamp_millis(
-                (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as i64) * 1000_i64
-                    + EPOCH_MS_TO_JAN_1_2000,
-            )
-            .unwrap(),
-            FixedOffset::west_opt(0).unwrap(),
-        );
+        let timestamp = UNIX_EPOCH.add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000)).add(Duration::from_millis((u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64));
         let version = u32::from_le_bytes(payload[21..25].try_into().unwrap()).to_string();
         let name = std::str::from_utf8(&payload[25..49])?
             .trim_end_matches('\0')

@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 v5_core = { path = "../core" }
 base64 = "0.20"
-chrono = "0.4"
 extendhash = "1.0"
 flate2 = "1.0"
 rust-ini = "0.18"

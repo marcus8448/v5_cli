@@ -7,6 +7,8 @@ use v5_core::error::Error;
 use v5_core::log::error;
 use v5_core::plugin::{Plugin, PORT};
 use v5_core::serial::system::{Brain, KernelVariable, Vid};
+use v5_core::time::format_description::well_known::Rfc3339;
+use v5_core::time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -223,7 +225,7 @@ async fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
         metadata.addr,
         metadata.crc,
         metadata.file_type,
-        metadata.timestamp.format("%+")
+        OffsetDateTime::from(metadata.timestamp).format(&Rfc3339).unwrap()
     );
     Ok(())
 }

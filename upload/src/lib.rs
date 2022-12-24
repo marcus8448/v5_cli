@@ -1,9 +1,9 @@
-use chrono::{DateTime, Local};
 use flate2::{Compress, Compression, FlushCompress};
 use ini::Ini;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::time::SystemTime;
 use tokio::task;
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueHint};
@@ -11,6 +11,8 @@ use v5_core::log::info;
 use v5_core::plugin::{Plugin, PORT};
 use v5_core::serial::system::{FileType, TransferTarget, UploadAction, Vid};
 use v5_core::serial::CRC32;
+use v5_core::time::format_description::well_known::Rfc3339;
+use v5_core::time::OffsetDateTime;
 use v5_core::tokio;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
@@ -129,7 +131,7 @@ async fn upload_program(args: ArgMatches) {
     let action = *args.get_one::<&str>(ACTION).unwrap();
     let overwrite = true;
     let index = *args.get_one::<u8>(INDEX).unwrap();
-    let timestamp = Local::now();
+    let timestamp = SystemTime::now();
     let cold_hash = base64::encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let file_name = format!("slot_{}.bin", index);
     let file_ini = format!("slot_{}.ini", index);
@@ -238,7 +240,7 @@ fn generate_ini(
     slot: u8,
     icon: &str,
     description: &str,
-    timestamp: DateTime<Local>,
+    timestamp: SystemTime,
 ) -> Vec<u8> {
     let mut ini = Ini::new();
     ini.with_section(Some("project"))
@@ -250,7 +252,7 @@ fn generate_ini(
         .set("slot", slot.to_string())
         .set("icon", icon)
         .set("description", description)
-        .set("date", format!("{}", timestamp.format("%+")));
+        .set("date", OffsetDateTime::from(timestamp).format(&Rfc3339).unwrap());
     let mut conf = Vec::<u8>::new();
     conf.reserve(128);
     ini.write_to(&mut conf).unwrap();
