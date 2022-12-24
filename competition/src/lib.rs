@@ -22,11 +22,11 @@ type Result<T> = std::result::Result<T, Error>;
 
 const COMPETITION: &str = "competition";
 
-const START: &str = "status";
-const DISABLE: &str = "metadata";
-const AUTONOMOUS: &str = "ls_files";
-const OPCONTROL: &str = "file_name";
-const LENGTH: &str = "vid";
+const START: &str = "start";
+const DISABLE: &str = "disable";
+const AUTONOMOUS: &str = "autonomous";
+const OPCONTROL: &str = "opcontrol";
+const LENGTH: &str = "length";
 
 export_plugin!(Box::new(CompetitionPlugin::default()));
 
@@ -83,7 +83,7 @@ impl Plugin for CompetitionPlugin {
 }
 
 async fn competition(args: ArgMatches) {
-    let mut brain =
+    let brain =
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
@@ -103,6 +103,7 @@ async fn autonomous(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
     brain.manage_competition(CompetitionStatus::Autonomous)?;
     std::thread::sleep(time);
+    brain.manage_competition(CompetitionStatus::Disabled)?;
     Ok(())
 }
 
@@ -110,10 +111,11 @@ async fn opcontrol(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
     brain.manage_competition(CompetitionStatus::OpControl)?;
     std::thread::sleep(time);
+    brain.manage_competition(CompetitionStatus::Disabled)?;
     Ok(())
 }
 
-async fn disable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn disable(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
     brain.manage_competition(CompetitionStatus::Disabled)?;
     Ok(())
 }
@@ -147,7 +149,7 @@ impl State {
 
 static STATE: AtomicU8 = AtomicU8::new(0);
 
-async fn start(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn start(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
     let notify = Arc::new(Notify::new());
     let logic_notify = notify.clone();
 

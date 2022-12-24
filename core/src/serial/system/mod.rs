@@ -9,7 +9,6 @@ use std::io;
 use std::io::Write;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use clap::builder::via_prelude;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -94,7 +93,6 @@ impl Product {
             Self::Brain => "Brain",
             Self::Controller { connected: true } => "Controller (Connected)",
             Self::Controller { connected: false } => "Controller (Disconnected)",
-            _ => unreachable!(),
         }
     }
 }
@@ -327,7 +325,15 @@ impl Display for FileMetadata2 {
         write!(
             f,
             "Name: {}\nVersion: {}\nSize: {}\nAddress: {}\nCRC: {}\nFile Type: {}\nTimestamp: {}",
-            self.name, self.version, self.size, self.addr, self.crc, self.file_type, OffsetDateTime::from(self.timestamp).format(&Rfc3339).unwrap()
+            self.name,
+            self.version,
+            self.size,
+            self.addr,
+            self.crc,
+            self.file_type,
+            OffsetDateTime::from(self.timestamp)
+                .format(&Rfc3339)
+                .unwrap()
         )
     }
 }
@@ -469,7 +475,11 @@ impl Brain {
         let file_type = std::str::from_utf8(&payload[13..17])?
             .trim_end_matches('\0')
             .to_string();
-        let timestamp = UNIX_EPOCH.add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000)).add(Duration::from_millis((u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64));
+        let timestamp = UNIX_EPOCH
+            .add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000))
+            .add(Duration::from_millis(
+                (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64,
+            ));
         let name = u32::from_le_bytes(payload[21..45].try_into().unwrap()).to_string();
         Ok(FileMetadata {
             vid,
@@ -560,7 +570,13 @@ impl Brain {
         packet.write_u32(address)?;
         packet.write_u32(crc)?;
         packet.write_str(&file_type.get_name(), 4)?;
-        packet.write_u32((&timestamp.duration_since(UNIX_EPOCH)?.sub(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000)).as_millis() / 1000) as u32)?;
+        packet.write_u32(
+            (&timestamp
+                .duration_since(UNIX_EPOCH)?
+                .sub(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000))
+                .as_millis()
+                / 1000) as u32,
+        )?;
         packet.write_u32(version)?;
         packet.write_padded_str(name, 24)?;
         let response = packet.send()?;
@@ -672,7 +688,11 @@ impl Brain {
         let file_type = std::str::from_utf8(&payload[13..17])?
             .trim_end_matches('\0')
             .to_string();
-        let timestamp = UNIX_EPOCH.add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000)).add(Duration::from_millis((u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64));
+        let timestamp = UNIX_EPOCH
+            .add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000))
+            .add(Duration::from_millis(
+                (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64,
+            ));
         let version = u32::from_le_bytes(payload[21..25].try_into().unwrap()).to_string();
         let name = std::str::from_utf8(&payload[25..49])?
             .trim_end_matches('\0')

@@ -252,7 +252,10 @@ fn generate_ini(
         .set("slot", slot.to_string())
         .set("icon", icon)
         .set("description", description)
-        .set("date", OffsetDateTime::from(timestamp).format(&Rfc3339).unwrap());
+        .set(
+            "date",
+            OffsetDateTime::from(timestamp).format(&Rfc3339).unwrap(),
+        );
     let mut conf = Vec::<u8>::new();
     conf.reserve(128);
     ini.write_to(&mut conf).unwrap();

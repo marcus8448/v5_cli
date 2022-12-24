@@ -175,7 +175,7 @@ impl Plugin for ManagePlugin {
 }
 
 async fn manage(args: ArgMatches) {
-    let mut brain =
+    let brain =
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
@@ -197,7 +197,7 @@ async fn manage(args: ArgMatches) {
     }
 }
 
-async fn get_status(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn get_status(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
     let status = brain.get_system_status()?;
     println!(
         "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
@@ -225,7 +225,9 @@ async fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
         metadata.addr,
         metadata.crc,
         metadata.file_type,
-        OffsetDateTime::from(metadata.timestamp).format(&Rfc3339).unwrap()
+        OffsetDateTime::from(metadata.timestamp)
+            .format(&Rfc3339)
+            .unwrap()
     );
     Ok(())
 }
@@ -241,7 +243,7 @@ async fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn stop_execution(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn stop_execution(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
     brain.execute_program(Vid::User, 0, "")?;
     Ok(())
 }
@@ -285,7 +287,7 @@ async fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn kernel_variable(brain: Brain, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
             GET => get_kernel_variable(brain, args).await,
