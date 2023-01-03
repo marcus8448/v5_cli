@@ -1,14 +1,11 @@
 use flate2::{Compress, Compression, FlushCompress};
 use ini::Ini;
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::time::SystemTime;
 use tokio::task;
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueHint};
 use v5_core::log::info;
-use v5_core::plugin::{Plugin, PORT};
+use v5_core::plugin::{CommandRegistry, CustomDataRegistry, Plugin, PORT};
 use v5_core::serial::system::{FileType, TransferTarget, UploadAction, Vid};
 use v5_core::serial::CRC32;
 use v5_core::time::format_description::well_known::Rfc3339;
@@ -40,16 +37,9 @@ impl Plugin for UploadPlugin {
         UPLOAD
     }
 
-    fn create_commands(
-        &self,
-        command: Command,
-        registry: &mut HashMap<
-            &'static str,
-            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
-        >,
-    ) -> Command {
+    fn create_commands(&self, registry: &mut CommandRegistry) -> Option<Command> {
         registry.insert(UPLOAD, Box::new(|f| Box::pin(upload_program(f))));
-        command.subcommand(
+        Some(
             Command::new(UPLOAD)
                 .about("Uploads a program to the robot")
                 .arg(
@@ -115,6 +105,12 @@ impl Plugin for UploadPlugin {
                         .action(ArgAction::Set),
                 ),
         )
+    }
+
+    fn register_custom(&self, _: &mut CustomDataRegistry) {}
+
+    fn take_custom(&self, registry: CustomDataRegistry) -> CustomDataRegistry {
+        registry
     }
 }
 
@@ -215,9 +211,8 @@ async fn upload_program(args: ArgMatches) {
 
 async fn compress(data: Vec<u8>) -> Vec<u8> {
     let mut compress = Compress::new(Compression::new(9), true);
-    let mut out = Vec::new();
     let len = data.len();
-    out.reserve_exact(data.len());
+    let mut out = Vec::with_capacity(len);
     loop {
         compress
             .compress_vec(&data, &mut out, FlushCompress::None)

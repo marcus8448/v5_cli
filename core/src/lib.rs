@@ -1,5 +1,6 @@
 pub mod error;
 pub mod plugin;
+pub mod registry;
 pub mod serial;
 
 pub extern crate clap;

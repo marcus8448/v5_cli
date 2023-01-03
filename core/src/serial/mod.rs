@@ -1,5 +1,5 @@
-pub mod program;
 pub mod system;
+pub mod user;
 
 use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
 use log::info;
@@ -67,8 +67,8 @@ pub fn open_serial_port(port: Option<String>, port_type: PortType) -> Box<dyn Se
     .expect("Failed to connect to robot!");
 }
 
-pub fn open_robot_connection(port: Option<String>) -> program::Connection {
-    program::Connection::new(open_serial_port(port, PortType::User))
+pub fn connect_to_user(port: Option<String>) -> user::UserProgram {
+    user::UserProgram::new(open_serial_port(port, PortType::User))
 }
 
 pub fn connect_to_brain(port: Option<String>) -> system::Brain {
