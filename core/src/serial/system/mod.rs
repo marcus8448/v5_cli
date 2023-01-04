@@ -1,6 +1,6 @@
 pub mod packet;
 
-use crate::error::{Error, Result};
+use crate::error::Error;
 use crate::serial::system::packet::{BasicPacket, ExtendedPacket, Packet, PacketResponse};
 use packet::PacketId;
 use serialport::SerialPort;
@@ -13,6 +13,8 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 pub const EPOCH_MS_TO_JAN_1_2000: u64 = 946684800000;
+
+type Result<T> = std::result::Result<T, Error>;
 
 pub enum FileType {
     Bin,

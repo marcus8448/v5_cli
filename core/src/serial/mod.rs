@@ -1,9 +1,9 @@
+pub mod program;
 pub mod system;
-pub mod user;
 
 use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
-use log::info;
 use serialport::{DataBits, Parity, SerialPort, SerialPortType};
+use std::time::Duration;
 
 pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_3740);
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
@@ -16,11 +16,12 @@ pub enum PortType {
 
 impl PortType {
     pub fn match_name(&self, name: &str) -> bool {
-        match self {
-            PortType::User => name.contains("User"),
-            PortType::System => name.contains("System") || name.contains("Communications"),
-            PortType::Controller => name.contains("Controller"),
-        }
+        return true;
+        // match self {
+        //     PortType::User => name.contains("User"),
+        //     PortType::System => name.contains("System") || name.contains("Communications"),
+        //     PortType::Controller => name.contains("Controller"),
+        // }
     }
 }
 
@@ -42,7 +43,7 @@ pub fn print_out_ports(port_type: Option<PortType>) {
                 && info.vid == 0x2888
                 && (port_type.is_none() || port_type.as_ref().unwrap().match_name(&p.port_name))
             {
-                info!(
+                println!(
                     "{}: {} {} ({} by {})",
                     p.port_name,
                     info.pid,
@@ -63,12 +64,13 @@ pub fn open_serial_port(port: Option<String>, port_type: PortType) -> Box<dyn Se
     )
     .parity(Parity::None)
     .data_bits(DataBits::Eight)
+    .timeout(Duration::from_secs(5))
     .open()
     .expect("Failed to connect to robot!");
 }
 
-pub fn connect_to_user(port: Option<String>) -> user::UserProgram {
-    user::UserProgram::new(open_serial_port(port, PortType::User))
+pub fn open_robot_connection(port: Option<String>) -> program::Connection {
+    program::Connection::new(open_serial_port(port, PortType::User))
 }
 
 pub fn connect_to_brain(port: Option<String>) -> system::Brain {

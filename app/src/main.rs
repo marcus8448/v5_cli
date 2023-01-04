@@ -1,11 +1,13 @@
-use v5_core::clap::{Arg, ArgAction, Command};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use v5_core::clap::{Arg, ArgAction, ArgMatches, Command};
 use v5_core::log::error;
-use v5_core::plugin::{CommandRegistry, CustomDataRegistry, Plugin};
+use v5_core::plugin::Plugin;
+use v5_core::serial::print_out_ports;
 use v5_core::tokio;
 
 fn main() {
-    env_logger::init();
-
     let mut command = Command::new("robot")
         .author("marcus8448")
         .about("Manages a connection with a Vex V5 robot")
@@ -24,24 +26,17 @@ fn main() {
                 .action(ArgAction::SetTrue),
         );
 
+    print_out_ports(None);
+
     unsafe {
         v5_core::plugin::DEFAULT_PLUGIN_REF = Some(Box::new(register_default_plugins));
     }
 
     let plugins = v5_core::plugin::load_plugins();
-    let mut registry = CommandRegistry::new();
-    for plugin in &plugins {
-        if let Some(cmd) = plugin.create_commands(&mut registry) {
-            assert!(registry.contains_key(&cmd.get_name()));
-            command = command.subcommand(cmd);
-        }
-    }
-    let mut data_registry = CustomDataRegistry::new();
-    for plugin in &plugins {
-        plugin.register_custom(&mut data_registry);
-    }
-    for plugin in &plugins {
-        data_registry = plugin.take_custom(data_registry);
+    let mut registry =
+        HashMap::<&'static str, Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>>::new();
+    for plugin in plugins {
+        command = plugin.create_commands(command, &mut registry);
     }
 
     let matches = command.get_matches();

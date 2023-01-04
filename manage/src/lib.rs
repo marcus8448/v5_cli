@@ -1,11 +1,16 @@
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
-use v5_core::error::{Error, Result};
+use v5_core::error::Error;
 use v5_core::log::error;
-use v5_core::plugin::{CommandRegistry, CustomDataRegistry, Plugin, PORT};
+use v5_core::plugin::{Plugin, PORT};
 use v5_core::serial::system::{Brain, KernelVariable, Vid};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
+
+type Result<T> = std::result::Result<T, Error>;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
 
@@ -43,12 +48,19 @@ impl Plugin for ManagePlugin {
         MANAGE
     }
 
-    fn create_commands(&self, registry: &mut CommandRegistry) -> Option<Command> {
+    fn create_commands(
+        &self,
+        command: Command,
+        registry: &mut HashMap<
+            &'static str,
+            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
+        >,
+    ) -> Command {
         registry.insert(MANAGE, Box::new(|f| Box::pin(manage(f))));
-
-        Some(
+        command.subcommand(
             Command::new(MANAGE)
                 .about("Manage the robot brain")
+                .help_expected(true)
                 .subcommand(Command::new(STATUS).about("Get the status of the robot brain"))
                 .subcommand(
                     Command::new(METADATA)
@@ -135,6 +147,7 @@ impl Plugin for ManagePlugin {
                 .subcommand(
                     Command::new(KERNEL_VARIABLE)
                         .about("Management of kernel variables")
+                        .help_expected(true)
                         .subcommand(
                             Command::new(GET)
                                 .about("Gets the value of a kernel variable")
@@ -159,16 +172,10 @@ impl Plugin for ManagePlugin {
                 ),
         )
     }
-
-    fn register_custom(&self, _: &mut CustomDataRegistry) {}
-
-    fn take_custom(&self, registry: CustomDataRegistry) -> CustomDataRegistry {
-        registry
-    }
 }
 
 async fn manage(args: ArgMatches) {
-    let brain =
+    let mut brain =
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
@@ -190,7 +197,7 @@ async fn manage(args: ArgMatches) {
     }
 }
 
-async fn get_status(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
+async fn get_status(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let status = brain.get_system_status()?;
     println!(
         "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
@@ -236,7 +243,7 @@ async fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn stop_execution(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
+async fn stop_execution(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     brain.execute_program(Vid::User, 0, "")?;
     Ok(())
 }
@@ -251,7 +258,8 @@ async fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
 async fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let c = brain.get_directory_count(vid, 0)?;
-    let mut vec = Vec::with_capacity(c as usize);
+    let mut vec = Vec::new();
+    vec.reserve(c as usize);
     for i in 0..c {
         vec.push(brain.get_file_metadata_by_index(i as u8, 0)?.name);
     }
@@ -279,7 +287,7 @@ async fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn kernel_variable(brain: Brain, args: &ArgMatches) -> Result<()> {
+async fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
             GET => get_kernel_variable(brain, args).await,
@@ -308,5 +316,5 @@ async fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> 
 }
 
 async fn capture_screen(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    todo!()
+    Ok(())
 }

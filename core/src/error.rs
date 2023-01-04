@@ -3,8 +3,6 @@ use std::fmt::Debug;
 use std::str::Utf8Error;
 use std::time::SystemTimeError;
 
-pub type Result<T> = std::result::Result<T, Error>;
-
 #[derive(Debug)]
 pub enum Error {
     Generic(&'static str),

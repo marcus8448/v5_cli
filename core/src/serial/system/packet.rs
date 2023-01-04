@@ -232,7 +232,8 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
     fn send(self) -> Result<PacketResponse> {
         self.connection.flush()?;
 
-        let mut payload = Vec::with_capacity(4);
+        let mut payload = Vec::new();
+        payload.reserve(4);
         loop {
             self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
             if payload[0] != RESPONSE_HEADER[0] {
@@ -274,7 +275,8 @@ impl<'a> Packet<'a> for BasicPacket<'a> {
 
 impl<'a> ExtendedPacket<'a> {
     pub(crate) fn create_sized(connection: &'a mut Connection, id: PacketId, size: u16) -> Self {
-        let mut vec = Vec::with_capacity((4 + 1 + 1 + 2 + size + 2) as usize); // 4 byte header, 1 byte id, 1 byte command, 2 byte length, arbitrary data, 2 byte CRC
+        let mut vec = Vec::new();
+        vec.reserve((4 + 1 + 1 + 2 + size + 2) as usize); // 4 byte header, 1 byte id, 1 byte command, 2 byte length, arbitrary data, 2 byte CRC
         vec.extend_from_slice(PACKET_HEADER);
         vec.push(EXT_PACKET_ID);
         vec.push(id.id());

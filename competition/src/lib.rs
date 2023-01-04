@@ -3,25 +3,30 @@ use cursive::event::Event;
 use cursive::traits::{Nameable, Scrollable};
 use cursive::views::{Dialog, SelectView, TextView};
 use cursive::Cursive;
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
-use v5_core::error::{Error, Result};
+use v5_core::error::Error;
 use v5_core::export_plugin;
 use v5_core::log::error;
-use v5_core::plugin::{CommandRegistry, CustomDataRegistry, Plugin, PORT};
+use v5_core::plugin::{Plugin, PORT};
 use v5_core::serial::system::{Brain, CompetitionStatus};
 use v5_core::tokio::sync::Notify;
 use v5_core::tokio::task;
 
+type Result<T> = std::result::Result<T, Error>;
+
 const COMPETITION: &str = "competition";
 
-const START: &str = "start";
-const DISABLE: &str = "disable";
-const AUTONOMOUS: &str = "autonomous";
-const OPCONTROL: &str = "opcontrol";
-const LENGTH: &str = "length";
+const START: &str = "status";
+const DISABLE: &str = "metadata";
+const AUTONOMOUS: &str = "ls_files";
+const OPCONTROL: &str = "file_name";
+const LENGTH: &str = "vid";
 
 export_plugin!(Box::new(CompetitionPlugin::default()));
 
@@ -38,11 +43,19 @@ impl Plugin for CompetitionPlugin {
         COMPETITION
     }
 
-    fn create_commands(&self, registry: &mut CommandRegistry) -> Option<Command> {
+    fn create_commands(
+        &self,
+        command: Command,
+        registry: &mut HashMap<
+            &'static str,
+            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
+        >,
+    ) -> Command {
         registry.insert(COMPETITION, Box::new(|f| Box::pin(competition(f))));
-        Some(
+        command.subcommand(
             Command::new(COMPETITION)
                 .about("Simulate a competition")
+                .help_expected(true)
                 .subcommand(Command::new(START).about("Starts an interactive competition manager"))
                 .subcommand(
                     Command::new(AUTONOMOUS)
@@ -67,16 +80,10 @@ impl Plugin for CompetitionPlugin {
                 .subcommand(Command::new(DISABLE).about("Disables the robot")),
         )
     }
-
-    fn register_custom(&self, _: &mut CustomDataRegistry) {}
-
-    fn take_custom(&self, registry: CustomDataRegistry) -> CustomDataRegistry {
-        registry
-    }
 }
 
 async fn competition(args: ArgMatches) {
-    let brain =
+    let mut brain =
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
@@ -96,7 +103,6 @@ async fn autonomous(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
     brain.manage_competition(CompetitionStatus::Autonomous)?;
     std::thread::sleep(time);
-    brain.manage_competition(CompetitionStatus::Disabled)?;
     Ok(())
 }
 
@@ -104,11 +110,10 @@ async fn opcontrol(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
     brain.manage_competition(CompetitionStatus::OpControl)?;
     std::thread::sleep(time);
-    brain.manage_competition(CompetitionStatus::Disabled)?;
     Ok(())
 }
 
-async fn disable(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
+async fn disable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     brain.manage_competition(CompetitionStatus::Disabled)?;
     Ok(())
 }
@@ -142,7 +147,7 @@ impl State {
 
 static STATE: AtomicU8 = AtomicU8::new(0);
 
-async fn start(mut brain: Brain, _args: &ArgMatches) -> Result<()> {
+async fn start(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let notify = Arc::new(Notify::new());
     let logic_notify = notify.clone();
 
