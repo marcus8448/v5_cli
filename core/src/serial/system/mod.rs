@@ -1,14 +1,15 @@
 pub mod packet;
 
 use crate::error::Error;
-use crate::serial::system::packet::{BasicPacket, ExtendedPacket, Packet, PacketResponse};
+use crate::serial::system::packet::{Packet, PacketResponse};
 use packet::PacketId;
 use serialport::SerialPort;
 use std::fmt::{Display, Formatter};
 use std::io;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use log::info;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -462,7 +463,7 @@ impl Brain {
 
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::GetFileMetadataByName, 26);
+            .begin_packet(PacketId::GetFileMetadataByName, 26);
         packet.write_u8(vid.get_id())?;
         packet.write_padded_str(name, 24)?;
 
@@ -536,7 +537,7 @@ impl Brain {
     pub fn link_file_transfer(&mut self, name: &str, vid: Vid) -> Result<PacketResponse> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::SetFileTransferLink, 1);
+            .begin_packet(PacketId::SetFileTransferLink, 1);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(0)?;
         packet.write_padded_str(name, 24)?;
@@ -561,7 +562,7 @@ impl Brain {
         assert!(name.len() > 0);
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::FileTransferInitialize, 52);
+            .begin_packet(PacketId::FileTransferInitialize, 52);
         packet.write_u8(direction.get_id())?;
         packet.write_u8(target.get_id())?;
         packet.write_u8(vid.get_id())?;
@@ -591,7 +592,7 @@ impl Brain {
     pub fn write_file_transfer_part(&mut self, slice: &[u8], address: u32) -> Result<()> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::FileTransferWrite, (4 + slice.len() + 1) as u16);
+            .begin_packet(PacketId::FileTransferWrite, 4 + slice.len() + 1);
         packet.write_u32(address)?;
         packet.write(slice)?;
         packet.write_u8(0)?;
@@ -599,33 +600,33 @@ impl Brain {
     }
 
     pub fn complete_file_transfer(&mut self, after: UploadAction) -> Result<()> {
-        let mut packet = self.connection.begin_packet(PacketId::FileTransferWrite);
+        let mut packet = self.connection.begin_packet(PacketId::FileTransferComplete, 1);
         packet.write_u8(after as u8)?;
         packet.send()?;
         Ok(())
     }
 
     pub fn get_system_version(&mut self) -> Result<SystemVersion> {
-        let response = self
-            .connection
-            .begin_packet(PacketId::FileTransferWrite)
-            .send()?;
-        let payload = response.get_data();
+        self.connection.raw.write(&[0xc9, 0x36, 0xb8, 0x47, PacketId::GetSystemVersion as u8])?;
+        let mut response = [0_u8; 8];
+        self.connection.raw.read_exact(&mut response)?;
+
+        info!("Extra sys version byte: {}", response[7]);
 
         Ok(SystemVersion {
-            major: payload[0],
-            minor: payload[1],
-            patch: payload[2],
-            a: payload[3],
-            b: payload[4],
-            product: Product::parse(payload[5], payload[6])?,
+            major: response[0],
+            minor: response[1],
+            patch: response[2],
+            a: response[3],
+            b: response[4],
+            product: Product::parse(response[5], response[6])?,
         })
     }
 
     pub fn get_kernel_variable(&mut self, variable: KernelVariable) -> Result<String> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::GetKernelVariable, 1);
+            .begin_packet(PacketId::GetKernelVariable, 1);
         packet.write_u8(variable.get_id())?;
         Ok(std::str::from_utf8(packet.send()?.get_data())
             .unwrap()
@@ -638,7 +639,7 @@ impl Brain {
         assert!(value.len() < variable.get_max_len() as usize);
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::SetKernelVariable, (1 + value.len() + 1) as u16);
+            .begin_packet(PacketId::SetKernelVariable, 1 + value.len() + 1);
         packet.write_u8(variable.get_id())?;
         packet.write_str(value, variable.get_max_len() as u16)?;
         Ok(std::str::from_utf8(packet.send()?.get_data())
@@ -650,7 +651,7 @@ impl Brain {
     pub fn get_system_status(&mut self) -> Result<SystemStatus> {
         let response = self
             .connection
-            .begin_extended_sized_packet(PacketId::GetSystemStatus, 0_u16)
+            .begin_packet(PacketId::GetSystemStatus, 0)
             .send()?;
         let data = response.get_data();
         Ok(SystemStatus::new(
@@ -665,7 +666,7 @@ impl Brain {
     pub fn get_directory_count(&mut self, vid: Vid, option: u8) -> Result<u16> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::GetDirectoryCount, 2_u16);
+            .begin_packet(PacketId::GetDirectoryCount, 2);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(option)?;
         let response = packet.send()?;
@@ -676,7 +677,7 @@ impl Brain {
     pub fn get_file_metadata_by_index(&mut self, index: u8, option: u8) -> Result<FileMetadata2> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::GetDirectoryCount, 2_u16);
+            .begin_packet(PacketId::GetDirectoryCount, 2);
         packet.write_u8(index)?;
         packet.write_u8(option)?;
         let response = packet.send()?;
@@ -712,7 +713,7 @@ impl Brain {
     pub fn execute_program(&mut self, vid: Vid, options: u8, file: &str) -> Result<()> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::ExecuteProgram, 26_u16);
+            .begin_packet(PacketId::ExecuteProgram, 26);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(options)?;
         packet.write_padded_str(file, 24)?;
@@ -723,7 +724,7 @@ impl Brain {
     pub fn delete_file(&mut self, vid: Vid, options: u8, file: &str) -> Result<()> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::DeleteFile, 26_u16);
+            .begin_packet(PacketId::DeleteFile, 26);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(options)?;
         packet.write_padded_str(file, 24)?;
@@ -735,7 +736,7 @@ impl Brain {
     pub fn manage_competition(&mut self, mode: CompetitionStatus) -> Result<()> {
         let mut packet = self
             .connection
-            .begin_extended_sized_packet(PacketId::ManageCompetition, 5_u16);
+            .begin_packet(PacketId::ManageCompetition, 5);
         packet.write_u8(mode as u8)?;
         packet.pad(4)?; // todo: what are these bytes?
         packet.send()?;
@@ -748,16 +749,9 @@ impl Connection {
         Connection { raw: connection }
     }
 
-    pub fn begin_packet(&mut self, id: PacketId) -> BasicPacket {
-        BasicPacket::create(self, id)
-    }
-
-    pub fn begin_extended_packet(&mut self, id: PacketId) -> ExtendedPacket {
-        ExtendedPacket::create(self, id)
-    }
-
-    pub fn begin_extended_sized_packet(&mut self, id: PacketId, size: u16) -> ExtendedPacket {
-        ExtendedPacket::create_sized(self, id, size)
+    pub fn begin_packet(&mut self, id: PacketId, size: usize) -> Packet {
+        assert!(size < u16::MAX as usize);
+        Packet::create(self, id, size as usize)
     }
 
     pub fn flush(&mut self) -> io::Result<()> {

@@ -1,6 +1,7 @@
 use crate::serial::system::Connection;
 use crate::serial::CRC16;
 use std::io::{Error, ErrorKind, Result, Write};
+use std::mem::size_of;
 
 const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
@@ -97,305 +98,148 @@ impl Nack {
     }
 }
 
-pub trait Packet<'a> {
-    fn create(connection: &'a mut Connection, id: PacketId) -> Self;
-
-    fn write_u8(&mut self, value: u8) -> Result<()>;
-    fn write_i8(&mut self, value: i8) -> Result<()>;
-    fn write_u16(&mut self, value: u16) -> Result<()>;
-    fn write_i16(&mut self, value: i16) -> Result<()>;
-    fn write_u32(&mut self, value: u32) -> Result<()>;
-    fn write_i32(&mut self, value: i32) -> Result<()>;
-    fn write_u64(&mut self, value: u64) -> Result<()>;
-    fn write_i64(&mut self, value: i64) -> Result<()>;
-    fn write_u128(&mut self, value: u128) -> Result<()>;
-    fn write_i128(&mut self, value: i128) -> Result<()>;
-    fn write_f32(&mut self, value: u32) -> Result<()>;
-    fn write_f64(&mut self, value: u64) -> Result<()>;
-    fn write(&mut self, slice: &[u8]) -> Result<()>;
-    fn write_str(&mut self, string: &str, target_len: u16) -> Result<()>;
-    fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()>;
-    fn pad(&mut self, amount: u16) -> Result<()>;
-    fn send(self) -> Result<PacketResponse>;
-}
-
-pub struct BasicPacket<'a> {
+pub struct Packet<'a> {
     connection: &'a mut Connection,
+    pos: usize,
+    data: Box<[u8]>,
 }
 
-pub struct ExtendedPacket<'a> {
-    connection: &'a mut Connection,
-    data: Vec<u8>,
-}
-
-impl<'a> Packet<'a> for BasicPacket<'a> {
-    fn create(connection: &'a mut Connection, id: PacketId) -> Self {
-        connection.raw.write(PACKET_HEADER).unwrap();
-        connection
-            .raw
-            .write(std::slice::from_ref(&id.id()))
-            .unwrap();
-        BasicPacket { connection }
-    }
-
-    fn write_u8(&mut self, value: u8) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_i8(&mut self, value: i8) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_u16(&mut self, value: u16) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_i16(&mut self, value: i16) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_u32(&mut self, value: u32) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_i32(&mut self, value: i32) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_u64(&mut self, value: u64) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_i64(&mut self, value: i64) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_u128(&mut self, value: u128) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_i128(&mut self, value: i128) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_f32(&mut self, value: u32) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write_f64(&mut self, value: u64) -> Result<()> {
-        self.connection.raw.write(&value.to_le_bytes())?;
-        Ok(())
-    }
-
-    fn write(&mut self, slice: &[u8]) -> Result<()> {
-        self.connection.raw.write(slice)?;
-        Ok(())
-    }
-
-    fn write_str(&mut self, string: &str, target_len: u16) -> Result<()> {
-        assert!(string.is_ascii());
-        assert!(string.len() < target_len as usize);
-        self.connection.raw.write(string.as_bytes())?;
-        self.connection.raw.write(std::slice::from_ref(&0))?; // null terminator
-        Ok(())
-    }
-
-    fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
-        assert!(string.is_ascii());
-        assert!(!string.contains('\0'));
-        assert!(string.len() < target_len as usize);
-        self.connection.raw.write(string.as_bytes())?;
-        self.connection.raw.write(std::slice::from_ref(&0))?; // null terminator
-        self.pad((target_len - 1) - string.len() as u16)?;
-        Ok(())
-    }
-
-    fn pad(&mut self, amount: u16) -> Result<()> {
-        let zero = std::slice::from_ref(&0_u8);
-        for _ in 0..amount {
-            self.connection.raw.write(zero)?;
-        }
-        Ok(())
-    }
-
-    fn send(self) -> Result<PacketResponse> {
-        self.connection.flush()?;
-
-        let mut payload = Vec::new();
-        payload.reserve(4);
-        loop {
-            self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
-            if payload[0] != RESPONSE_HEADER[0] {
-                continue;
-            }
-            self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
-            if payload[1] != RESPONSE_HEADER[1] {
-                continue;
-            }
-            break;
-        }
-
-        self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
-        let command = payload[2];
-        self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
-        let mut len: u16 = payload[3] as u16;
-        let data_start: usize;
-        if command == EXT_PACKET_ID && len & 0x80 == 0x80 {
-            self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
-            len = ((len & 0x7f) << 8) + payload[4] as u16;
-
-            data_start = payload.len();
-            payload.reserve(len as usize);
-            self.connection.raw.read_exact(&mut payload[5..]).unwrap();
-        } else {
-            data_start = payload.len();
-            payload.reserve(len as usize);
-            self.connection.raw.read_exact(&mut payload[4..]).unwrap();
-        }
-        let data_end = payload.len();
-        Ok(PacketResponse {
-            command,
-            payload,
-            data_start,
-            data_end,
-        })
-    }
-}
-
-impl<'a> ExtendedPacket<'a> {
-    pub(crate) fn create_sized(connection: &'a mut Connection, id: PacketId, size: u16) -> Self {
-        let mut vec = Vec::new();
-        vec.reserve((4 + 1 + 1 + 2 + size + 2) as usize); // 4 byte header, 1 byte id, 1 byte command, 2 byte length, arbitrary data, 2 byte CRC
-        vec.extend_from_slice(PACKET_HEADER);
-        vec.push(EXT_PACKET_ID);
-        vec.push(id.id());
-        ExtendedPacket {
+impl<'a> Packet<'a> {
+    pub(crate) fn create(connection: &'a mut Connection, id: PacketId, data_len: usize) -> Self {
+        let mut data = vec![0_u8; 4 + 1 + 1 + 2 + data_len + 2].into_boxed_slice(); // 4 byte header, 1 byte id, 1 byte command, 2 byte length, arbitrary data, 2 byte CRC
+        data[..4].copy_from_slice(PACKET_HEADER);
+        data[4] = EXT_PACKET_ID;
+        data[5] = id.id();
+        Packet {
             connection,
-            data: vec,
+            pos: 8,
+            data
         }
     }
-}
 
-impl<'a> Packet<'a> for ExtendedPacket<'a> {
-    fn create(connection: &'a mut Connection, id: PacketId) -> Self {
-        ExtendedPacket::create_sized(connection, id, 64)
-    }
-
-    fn write_u8(&mut self, value: u8) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_u8(&mut self, value: u8) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<u8>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u8>();
         Ok(())
     }
 
-    fn write_i8(&mut self, value: i8) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_i8(&mut self, value: i8) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<i8>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i8>();
         Ok(())
     }
 
-    fn write_u16(&mut self, value: u16) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_u16(&mut self, value: u16) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<u16>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u16>();
         Ok(())
     }
 
-    fn write_i16(&mut self, value: i16) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_i16(&mut self, value: i16) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<i16>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i16>();
         Ok(())
     }
 
-    fn write_u32(&mut self, value: u32) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_u32(&mut self, value: u32) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<u32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u32>();
         Ok(())
     }
 
-    fn write_i32(&mut self, value: i32) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_i32(&mut self, value: i32) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i32>();
         Ok(())
     }
 
-    fn write_u64(&mut self, value: u64) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_u64(&mut self, value: u64) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<u64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u64>();
         Ok(())
     }
 
-    fn write_i64(&mut self, value: i64) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_i64(&mut self, value: i64) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<i64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i64>();
         Ok(())
     }
 
-    fn write_u128(&mut self, value: u128) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+
+    pub fn write_u128(&mut self, value: u128) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<u128>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u128>();
         Ok(())
     }
 
-    fn write_i128(&mut self, value: i128) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_i128(&mut self, value: i128) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<i128>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i128>();
         Ok(())
     }
 
-    fn write_f32(&mut self, value: u32) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_f32(&mut self, value: f32) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<f32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<f32>();
         Ok(())
     }
 
-    fn write_f64(&mut self, value: u64) -> Result<()> {
-        self.data.extend_from_slice(&value.to_le_bytes());
+    pub fn write_f64(&mut self, value: f64) -> Result<()> {
+        self.data[self.pos..self.pos + size_of::<f64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<f64>();
         Ok(())
     }
 
-    fn write(&mut self, slice: &[u8]) -> Result<()> {
-        self.data.extend_from_slice(slice);
+    pub fn write(&mut self, slice: &[u8]) -> Result<()> {
+        self.data[self.pos..self.pos + slice.len()].copy_from_slice(slice);
+        self.pos += slice.len();
         Ok(())
     }
 
-    fn write_str(&mut self, string: &str, target_len: u16) -> Result<()> {
+    pub fn write_str(&mut self, string: &str, target_len: u16) -> Result<()> {
+        assert!(string.is_ascii());
+        assert!(!string.contains('\0'));
+        assert!(string.len() < target_len as usize); // < because of the null terminator
+        self.data[self.pos..self.pos + string.len()].copy_from_slice(string.as_bytes());
+        self.pos += string.len() + 1;
+        self.data[self.pos - 1] = 0; // null terminator
+        Ok(())
+    }
+
+    pub fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
         assert!(string.is_ascii());
         assert!(!string.contains('\0'));
         assert!(string.len() < target_len as usize);
-        self.data.extend_from_slice(string.as_bytes());
-        self.data.push(0); // null terminator
-        Ok(())
-    }
-
-    fn write_padded_str(&mut self, string: &str, target_len: u16) -> Result<()> {
-        assert!(string.is_ascii());
-        assert!(!string.contains('\0'));
-        assert!(string.len() < target_len as usize);
-        self.data.extend_from_slice(string.as_bytes());
-        self.data.push(0); // null terminator
+        self.data[self.pos..self.pos + string.len()].copy_from_slice(string.as_bytes());
+        self.pos += string.len() + 1;
+        self.data[self.pos - 1] = 0; // null terminator
         self.pad((target_len - 1) - string.len() as u16)?;
         Ok(())
     }
 
-    fn pad(&mut self, amount: u16) -> Result<()> {
-        for _ in 0..amount {
-            self.data.push(0);
+    pub fn pad(&mut self, amount: u16) -> Result<()> {
+        for x in 0..amount {
+            self.data[self.pos + x as usize] = 0;
         }
+        self.pos += amount as usize;
         Ok(())
     }
 
-    fn send(mut self) -> Result<PacketResponse> {
-        self.data.splice(6..6, self.data.len().to_le_bytes());
+    pub fn send(mut self) -> Result<PacketResponse> {
+        let len = self.data.len();
+        self.data[6..8].copy_from_slice(&(len as u16).to_le_bytes());
+        let sum = &CRC16.checksum(&self.data).to_le_bytes();
+        self.data[self.pos..self.pos + 2].copy_from_slice(sum);
+        self.pos += 2;
+        assert_eq!(self.pos, len);
+
         self.connection.raw.write(&self.data)?;
-        self.connection
-            .raw
-            .write(&CRC16.checksum(&self.data).to_le_bytes())?;
         self.connection.flush()?;
 
         let sent_command = self.data[5];
-
-        let mut payload = self.data;
+        let mut payload = Vec::from(self.data);
         payload.clear();
-        payload.reserve(5);
+        payload.copy_from_slice(&[0; 5]);
 
         loop {
             self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
@@ -415,17 +259,16 @@ impl<'a> Packet<'a> for ExtendedPacket<'a> {
         let mut len: u16 = payload[3] as u16;
         let data_start: usize;
         if command == EXT_PACKET_ID && len & 0x80 == 0x80 {
+            payload.push(0);
             self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
             len = ((len & 0x7f) << 8) + payload[4] as u16;
 
-            data_start = payload.len();
-            payload.reserve(len as usize);
-            self.connection.raw.read_exact(&mut payload[5..]).unwrap();
+            data_start = 5;
         } else {
-            data_start = payload.len();
-            payload.reserve(len as usize);
-            self.connection.raw.read_exact(&mut payload[4..]).unwrap();
+            data_start = 4;
         }
+        payload.extend_from_slice(&vec![0_u8; len as usize]);
+        self.connection.raw.read_exact(&mut payload[data_start..]).unwrap();
 
         assert_eq!(command, EXT_PACKET_ID);
         assert_eq!(sent_command, payload[data_start as usize]);

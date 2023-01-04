@@ -956,6 +956,7 @@ dependencies = [
  "crc",
  "libloading",
  "log",
+ "serde",
  "serialport",
  "time",
  "tokio",
