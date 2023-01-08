@@ -37,15 +37,14 @@ pub trait Plugin {
 }
 
 pub fn load_plugins() -> Vec<Box<dyn Plugin>> {
-    let string = std::env::current_exe()
+    let mut path = std::env::current_exe()
         .unwrap()
         .parent()
         .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned()
-        + "/plugins";
-    let path = Path::new(&string);
+        .to_path_buf();
+    path.push("plugins");
+        
+    let path = path.as_path();
     if !path.exists() {
         std::fs::create_dir(path).expect("failed to create plugins directory");
     }

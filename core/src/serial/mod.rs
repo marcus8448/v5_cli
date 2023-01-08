@@ -2,7 +2,8 @@ pub mod program;
 pub mod system;
 
 use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
-use serialport::{DataBits, Parity, SerialPort, SerialPortType};
+use log::warn;
+use serialport::{DataBits, Parity, SerialPort, SerialPortType, FlowControl};
 use std::time::Duration;
 
 pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_3740);
@@ -16,19 +17,18 @@ pub enum PortType {
 
 impl PortType {
     pub fn match_name(&self, name: &str) -> bool {
-        return true;
-        // match self {
-        //     PortType::User => name.contains("User"),
-        //     PortType::System => name.contains("System") || name.contains("Communications"),
-        //     PortType::Controller => name.contains("Controller"),
-        // }
+        match self {
+            PortType::User => name.contains("User"),
+            PortType::System => name.contains("System") || name.contains("Communications"),
+            PortType::Controller => name.contains("Controller"),
+        }
     }
 }
 
 pub fn find_port(port_type: PortType) -> Option<String> {
     for p in serialport::available_ports().expect("Failed to obtain list of ports!") {
         if let SerialPortType::UsbPort(info) = p.port_type {
-            if info.pid == 0x0501 && info.vid == 0x2888 && port_type.match_name(&p.port_name) {
+            if info.pid == 0x0501 && info.vid == 0x2888 && info.product.map(|f| port_type.match_name(&f)).unwrap_or_else(|| { warn!("skipping type check"); return true;}) {
                 return Some(p.port_name);
             }
         }
@@ -57,7 +57,7 @@ pub fn print_out_ports(port_type: Option<PortType>) {
 }
 
 pub fn open_serial_port(port: Option<String>, port_type: PortType) -> Box<dyn SerialPort> {
-    return serialport::new(
+    let mut serial_port = serialport::new(
         port.or(find_port(port_type))
             .expect("Unable to find V5 port!"),
         115200,
@@ -65,8 +65,11 @@ pub fn open_serial_port(port: Option<String>, port_type: PortType) -> Box<dyn Se
     .parity(Parity::None)
     .data_bits(DataBits::Eight)
     .timeout(Duration::from_secs(5))
+    .flow_control(FlowControl::None)
     .open()
     .expect("Failed to connect to robot!");
+    serial_port.write_data_terminal_ready(true).unwrap();
+    return serial_port;
 }
 
 pub fn open_robot_connection(port: Option<String>) -> program::Connection {
@@ -74,5 +77,8 @@ pub fn open_robot_connection(port: Option<String>) -> program::Connection {
 }
 
 pub fn connect_to_brain(port: Option<String>) -> system::Brain {
-    system::Brain::new(open_serial_port(port, PortType::System))
+    let mut brain = system::Brain::new(open_serial_port(port, PortType::System));
+    let version = brain.get_system_version().unwrap();
+    println!("{} ({})", version.get_version(), version.get_product().get_name());
+    brain
 }

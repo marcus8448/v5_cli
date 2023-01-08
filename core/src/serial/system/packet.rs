@@ -233,20 +233,25 @@ impl<'a> Packet<'a> {
         self.pos += 2;
         assert_eq!(self.pos, len);
 
-        self.connection.raw.write(&self.data)?;
+        println!("{:?}", self.data);
+        let x = self.connection.raw.write(&self.data)?;
+        assert_eq!(x, self.data.len());
         self.connection.flush()?;
 
         let sent_command = self.data[5];
         let mut payload = Vec::from(self.data);
         payload.clear();
-        payload.copy_from_slice(&[0; 5]);
+        payload.resize(5, 0_u8);
 
         loop {
+            println!("bx");
             self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
+            println!("a{}", payload[0]);
             if payload[0] != RESPONSE_HEADER[0] {
                 continue;
             }
             self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
+            println!("b{}", payload[1]);
             if payload[1] != RESPONSE_HEADER[1] {
                 continue;
             }
@@ -267,7 +272,7 @@ impl<'a> Packet<'a> {
         } else {
             data_start = 4;
         }
-        payload.extend_from_slice(&vec![0_u8; len as usize]);
+        payload.resize(payload.len() + len as usize, 0_u8);
         self.connection.raw.read_exact(&mut payload[data_start..]).unwrap();
 
         assert_eq!(command, EXT_PACKET_ID);

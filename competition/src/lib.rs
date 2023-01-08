@@ -55,7 +55,6 @@ impl Plugin for CompetitionPlugin {
         command.subcommand(
             Command::new(COMPETITION)
                 .about("Simulate a competition")
-                .help_expected(true)
                 .subcommand(Command::new(START).about("Starts an interactive competition manager"))
                 .subcommand(
                     Command::new(AUTONOMOUS)

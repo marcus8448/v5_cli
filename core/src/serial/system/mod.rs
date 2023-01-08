@@ -82,14 +82,14 @@ impl Product {
         }
     }
 
-    fn get_id(&self) -> u8 {
+    pub fn get_id(&self) -> u8 {
         match &self {
             Self::Brain => 0x10,
             Self::Controller { .. } => 0x11,
         }
     }
 
-    fn get_name(&self) -> &'static str {
+    pub fn get_name(&self) -> &'static str {
         match self {
             Self::Brain => "Brain",
             Self::Controller { connected: true } => "Controller (Connected)",
@@ -608,18 +608,20 @@ impl Brain {
 
     pub fn get_system_version(&mut self) -> Result<SystemVersion> {
         self.connection.raw.write(&[0xc9, 0x36, 0xb8, 0x47, PacketId::GetSystemVersion as u8])?;
-        let mut response = [0_u8; 8];
+        const OFFSET: usize = 4;
+
+        let mut response = [0_u8; OFFSET + 8];
         self.connection.raw.read_exact(&mut response)?;
 
-        info!("Extra sys version byte: {}", response[7]);
+        info!("Extra sys version byte: {}", response[OFFSET + 7]);
 
         Ok(SystemVersion {
-            major: response[0],
-            minor: response[1],
-            patch: response[2],
-            a: response[3],
-            b: response[4],
-            product: Product::parse(response[5], response[6])?,
+            major: response[OFFSET + 0],
+            minor: response[OFFSET + 1],
+            patch: response[OFFSET + 2],
+            a: response[OFFSET + 3],
+            b: response[OFFSET + 4],
+            product: Product::parse(response[OFFSET + 5], response[OFFSET + 6])?,
         })
     }
 

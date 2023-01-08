@@ -60,7 +60,6 @@ impl Plugin for ManagePlugin {
         command.subcommand(
             Command::new(MANAGE)
                 .about("Manage the robot brain")
-                .help_expected(true)
                 .subcommand(Command::new(STATUS).about("Get the status of the robot brain"))
                 .subcommand(
                     Command::new(METADATA)
@@ -147,7 +146,6 @@ impl Plugin for ManagePlugin {
                 .subcommand(
                     Command::new(KERNEL_VARIABLE)
                         .about("Management of kernel variables")
-                        .help_expected(true)
                         .subcommand(
                             Command::new(GET)
                                 .about("Gets the value of a kernel variable")
