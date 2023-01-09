@@ -463,25 +463,26 @@ impl Brain {
 
         let mut packet = self
             .connection
-            .begin_packet(PacketId::GetFileMetadataByName, 26);
+            .begin_packet(PacketId::GetFileMetadataByName, 2 + name.len() + 1);
         packet.write_u8(vid.get_id())?;
-        packet.write_padded_str(name, 24)?;
+        packet.write_u8(0)?; // "option"
+        packet.write_str(name, 24)?;
 
         let response = packet.send()?;
         let payload = response.get_data();
         let vid = Vid::from(payload[0]);
         let size = u32::from_le_bytes(payload[1..5].try_into().unwrap());
         let addr = u32::from_le_bytes(payload[5..9].try_into().unwrap());
-        let crc = u32::from_le_bytes(payload[9..13].try_into().unwrap());
-        let file_type = std::str::from_utf8(&payload[13..17])?
+        let crc = u32::from_le_bytes(payload[9..13].try_into().unwrap()); //fixme
+        let file_type = std::str::from_utf8(&payload[15..19])?
             .trim_end_matches('\0')
             .to_string();
         let timestamp = UNIX_EPOCH
             .add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000))
             .add(Duration::from_millis(
-                (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64,
+                (u32::from_le_bytes(payload[19..23].try_into().unwrap()) as u64) * 1000_u64, //fixme
             ));
-        let name = u32::from_le_bytes(payload[21..45].try_into().unwrap()).to_string();
+        let name = std::str::from_utf8(&payload[27..])?.trim_end_matches('\0').to_string();
         Ok(FileMetadata {
             vid,
             size,

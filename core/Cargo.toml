@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-backtrace = "0.2.2"
 clap = "4.0"
 crc = "3.0"
 libloading = "0.7"

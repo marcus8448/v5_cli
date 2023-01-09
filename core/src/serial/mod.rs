@@ -1,12 +1,13 @@
 pub mod program;
 pub mod system;
 
-use crc::{Crc, CRC_16_IBM_3740, CRC_32_BZIP2};
+use std::sync::atomic::{AtomicU8, Ordering};
+use crc::{Crc, CRC_16_IBM_3740, CRC_16_XMODEM, CRC_32_BZIP2};
 use log::warn;
 use serialport::{DataBits, Parity, SerialPort, SerialPortType, FlowControl};
 use std::time::Duration;
 
-pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_3740);
+pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
 
 pub enum PortType {
@@ -16,6 +17,19 @@ pub enum PortType {
 }
 
 impl PortType {
+    #[cfg(all(target_os = "linux"))]
+    pub fn match_name(&self, _name: &str) -> bool {
+        static HORRIBLE: AtomicU8 = AtomicU8::new(0);
+        let horrible = HORRIBLE.fetch_add(1, Ordering::Relaxed);
+        return match self {
+            PortType::User | PortType::Controller => {
+                return horrible == 1;
+            },
+            PortType::System => true,
+        }
+    }
+
+    #[cfg(all(not(target_os = "linux")))]
     pub fn match_name(&self, name: &str) -> bool {
         match self {
             PortType::User => name.contains("User"),

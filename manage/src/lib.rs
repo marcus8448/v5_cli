@@ -67,6 +67,7 @@ impl Plugin for ManagePlugin {
                         .arg(
                             Arg::new(FILE_NAME)
                                 .index(1)
+                                .required(true)
                                 .value_parser(NonEmptyStringValueParser::new()),
                         )
                         .arg(
@@ -116,6 +117,7 @@ impl Plugin for ManagePlugin {
                         .arg(
                             Arg::new(FILE_NAME)
                                 .index(1)
+                                .required(true)
                                 .value_parser(NonEmptyStringValueParser::new()),
                         )
                         .arg(
@@ -131,6 +133,7 @@ impl Plugin for ManagePlugin {
                         .arg(
                             Arg::new(SLOT)
                                 .index(1)
+                                .required(true)
                                 .value_parser(value_parser!(u8).range(1..=8)),
                         )
                         .arg(

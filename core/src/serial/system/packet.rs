@@ -59,6 +59,7 @@ impl PacketResponse {
 }
 
 #[repr(u8)]
+#[derive(Debug)]
 pub enum Nack {
     General = 0xFF,
     InvalidCrc = 0xCE,
@@ -100,19 +101,21 @@ impl Nack {
 
 pub struct Packet<'a> {
     connection: &'a mut Connection,
+    data_len: u16,
     pos: usize,
     data: Box<[u8]>,
 }
 
 impl<'a> Packet<'a> {
     pub(crate) fn create(connection: &'a mut Connection, id: PacketId, data_len: usize) -> Self {
-        let mut data = vec![0_u8; 4 + 1 + 1 + 2 + data_len + 2].into_boxed_slice(); // 4 byte header, 1 byte id, 1 byte command, 2 byte length, arbitrary data, 2 byte CRC
+        let mut data = vec![0_u8; 4 + 1 + 1 + (if data_len > 0x80 { 2 } else { 1 }) + data_len + 2].into_boxed_slice(); // 4 byte header, 1 byte id, 1 byte command, 1-2 byte length, arbitrary data, 2 byte CRC
         data[..4].copy_from_slice(PACKET_HEADER);
         data[4] = EXT_PACKET_ID;
         data[5] = id.id();
         Packet {
             connection,
-            pos: 8,
+            data_len: data_len as u16,
+            pos: if data_len > 0x80 { 8 } else { 7 },
             data
         }
     }
@@ -227,13 +230,21 @@ impl<'a> Packet<'a> {
 
     pub fn send(mut self) -> Result<PacketResponse> {
         let len = self.data.len();
-        self.data[6..8].copy_from_slice(&(len as u16).to_le_bytes());
-        let sum = &CRC16.checksum(&self.data).to_le_bytes();
-        self.data[self.pos..self.pos + 2].copy_from_slice(sum);
+        let data_len = self.data_len;
+        if data_len < 0x80 {
+            self.data[6] = (data_len as u8).to_le();
+        } else {
+            self.data[6] = ((data_len >> 8 | 0x80) as u8).to_le();
+            self.data[7] = ((data_len & 0xff) as u8).to_le();
+        }
+
+        let sum = &CRC16.checksum(&self.data[..self.pos]).to_le_bytes();
+        self.data[self.pos] = sum[1];
+        self.data[self.pos + 1] = sum[0];
         self.pos += 2;
         assert_eq!(self.pos, len);
 
-        println!("{:?}", self.data);
+        println!("sent: {:?}", self.data);
         let x = self.connection.raw.write(&self.data)?;
         assert_eq!(x, self.data.len());
         self.connection.flush()?;
@@ -241,10 +252,10 @@ impl<'a> Packet<'a> {
         let sent_command = self.data[5];
         let mut payload = Vec::from(self.data);
         payload.clear();
-        payload.resize(5, 0_u8);
+        payload.resize(4, 0_u8);
 
         loop {
-            println!("bx");
+            println!("awaiting response");
             self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
             println!("a{}", payload[0]);
             if payload[0] != RESPONSE_HEADER[0] {
@@ -257,9 +268,11 @@ impl<'a> Packet<'a> {
             }
             break;
         }
+        println!("received header");
 
         self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
         let command = payload[2];
+        println!("command: {}", command);
         self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
         let mut len: u16 = payload[3] as u16;
         let data_start: usize;
@@ -272,17 +285,21 @@ impl<'a> Packet<'a> {
         } else {
             data_start = 4;
         }
+        println!("length: {}", len);
         payload.resize(payload.len() + len as usize, 0_u8);
         self.connection.raw.read_exact(&mut payload[data_start..]).unwrap();
-
+        //C9 36 B8 47 56 22 00 60 FC
+        //201, 54, 184, 71, 86, 34, 10, 0, 85, 68
         assert_eq!(command, EXT_PACKET_ID);
         assert_eq!(sent_command, payload[data_start as usize]);
         assert_eq!(CRC16.checksum(&payload), 0);
 
+        println!("recieved data: {:?}", &payload);
+
         if let Some(nack) = Nack::maybe_find(payload[(data_start + 1) as usize]) {
             return Err(Error::new(
                 ErrorKind::Unsupported,
-                format!("NACK: {}", nack as u8),
+                format!("NACK: {:?}", nack),
             ));
         }
 

@@ -22,7 +22,6 @@ fn main() {
             Arg::new("verbose")
                 .help("Enables extra debug logging")
                 .short('v')
-                .global(true)
                 .action(ArgAction::SetTrue),
         );
 
@@ -39,17 +38,10 @@ fn main() {
         command = plugin.create_commands(command, &mut registry);
     }
 
-    let matches = command.get_matches();
+    let matches = command.get_matches_mut();
     match matches.subcommand() {
         None => {
-            if let Ok(path) = std::env::current_exe() {
-                error!(
-                    "No subcommand provided!\nUse `{} --help` to see usage.",
-                    path.file_name().unwrap().to_str().unwrap()
-                );
-            } else {
-                error!("No subcommand provided!\nUse `<program> --help` to see usage.");
-            }
+            command.print_help().unwrap();
         }
         Some((name, matches)) => {
             tokio::runtime::Builder::new_multi_thread()
