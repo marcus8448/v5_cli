@@ -25,6 +25,7 @@ pub enum PacketId {
     SetProgramFileMetadata = 0x1A,
     DeleteFile = 0x1B,
     GetFileSlot = 0x1C,
+    CopyScreenData = 0x28,
     GetKernelVariable = 0x2E,
     SetKernelVariable = 0x2F,
 
@@ -108,7 +109,8 @@ pub struct Packet<'a> {
 
 impl<'a> Packet<'a> {
     pub(crate) fn create(connection: &'a mut Connection, id: PacketId, data_len: usize) -> Self {
-        let mut data = vec![0_u8; 4 + 1 + 1 + (if data_len > 0x80 { 2 } else { 1 }) + data_len + 2].into_boxed_slice(); // 4 byte header, 1 byte id, 1 byte command, 1-2 byte length, arbitrary data, 2 byte CRC
+        let mut data = vec![0_u8; 4 + 1 + 1 + (if data_len > 0x80 { 2 } else { 1 }) + data_len + 2]
+            .into_boxed_slice(); // 4 byte header, 1 byte id, 1 byte command, 1-2 byte length, arbitrary data, 2 byte CRC
         data[..4].copy_from_slice(PACKET_HEADER);
         data[4] = EXT_PACKET_ID;
         data[5] = id.id();
@@ -116,7 +118,7 @@ impl<'a> Packet<'a> {
             connection,
             data_len: data_len as u16,
             pos: if data_len > 0x80 { 8 } else { 7 },
-            data
+            data,
         }
     }
 
@@ -167,7 +169,6 @@ impl<'a> Packet<'a> {
         self.pos += size_of::<i64>();
         Ok(())
     }
-
 
     pub fn write_u128(&mut self, value: u128) -> Result<()> {
         self.data[self.pos..self.pos + size_of::<u128>()].copy_from_slice(&value.to_le_bytes());
@@ -287,9 +288,10 @@ impl<'a> Packet<'a> {
         }
         println!("length: {}", len);
         payload.resize(payload.len() + len as usize, 0_u8);
-        self.connection.raw.read_exact(&mut payload[data_start..]).unwrap();
-        //C9 36 B8 47 56 22 00 60 FC
-        //201, 54, 184, 71, 86, 34, 10, 0, 85, 68
+        self.connection
+            .raw
+            .read_exact(&mut payload[data_start..])
+            .unwrap();
         assert_eq!(command, EXT_PACKET_ID);
         assert_eq!(sent_command, payload[data_start as usize]);
         assert_eq!(CRC16.checksum(&payload), 0);
@@ -310,7 +312,7 @@ impl<'a> Packet<'a> {
         Ok(PacketResponse {
             command,
             payload,
-            data_start,
+            data_start: data_start + 2, // real command, NACK
             data_end,
         })
     }

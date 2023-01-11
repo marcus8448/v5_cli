@@ -83,7 +83,16 @@ impl Plugin for ManagePlugin {
                                 .value_parser(value_parser!(u8)),
                         ),
                 )
-                .subcommand(Command::new(LIST_FILES).about("Lists all files on the brain"))
+                .subcommand(
+                    Command::new(LIST_FILES)
+                        .about("Lists all files on the brain")
+                        .arg(
+                            Arg::new(VID)
+                                .short('v')
+                                .default_value("1")
+                                .value_parser(value_parser!(u8)),
+                        ),
+                )
                 .subcommand(Command::new(STOP).about("Terminates a running program"))
                 .subcommand(
                     Command::new(RUN)

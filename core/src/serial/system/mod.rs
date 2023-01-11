@@ -2,6 +2,7 @@ pub mod packet;
 
 use crate::error::Error;
 use crate::serial::system::packet::{Packet, PacketResponse};
+use log::info;
 use packet::PacketId;
 use serialport::SerialPort;
 use std::fmt::{Display, Formatter};
@@ -9,7 +10,6 @@ use std::io;
 use std::io::{Read, Write};
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use log::info;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -307,21 +307,11 @@ pub struct FileMetadata {
     pub crc: u32,
     pub file_type: String,
     pub timestamp: SystemTime,
+    pub version: u32,
     pub name: String,
 }
 
-pub struct FileMetadata2 {
-    pub index: u8,
-    pub size: u32,
-    pub addr: u32,
-    pub crc: u32,
-    pub file_type: String,
-    pub timestamp: SystemTime,
-    pub version: String,
-    pub name: String,
-}
-
-impl Display for FileMetadata2 {
+impl Display for FileMetadata {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -411,11 +401,11 @@ pub struct SystemStatus {
     cpu0: Version,
     cpu1: Version,
     touch: u8,
-    system_id: u8,
+    system_id: u32,
 }
 
 impl SystemStatus {
-    pub fn new(system: Version, cpu0: Version, cpu1: Version, touch: u8, system_id: u8) -> Self {
+    pub fn new(system: Version, cpu0: Version, cpu1: Version, touch: u8, system_id: u32) -> Self {
         SystemStatus {
             system,
             cpu0,
@@ -441,7 +431,7 @@ impl SystemStatus {
         self.touch
     }
 
-    pub fn get_system_id(&self) -> u8 {
+    pub fn get_system_id(&self) -> u32 {
         self.system_id
     }
 }
@@ -473,16 +463,19 @@ impl Brain {
         let vid = Vid::from(payload[0]);
         let size = u32::from_le_bytes(payload[1..5].try_into().unwrap());
         let addr = u32::from_le_bytes(payload[5..9].try_into().unwrap());
-        let crc = u32::from_le_bytes(payload[9..13].try_into().unwrap()); //fixme
-        let file_type = std::str::from_utf8(&payload[15..19])?
+        let crc = u32::from_le_bytes(payload[9..13].try_into().unwrap());
+        let file_type = std::str::from_utf8(&payload[13..17])?
             .trim_end_matches('\0')
             .to_string();
         let timestamp = UNIX_EPOCH
             .add(Duration::from_millis(EPOCH_MS_TO_JAN_1_2000))
             .add(Duration::from_millis(
-                (u32::from_le_bytes(payload[19..23].try_into().unwrap()) as u64) * 1000_u64, //fixme
+                (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64,
             ));
-        let name = std::str::from_utf8(&payload[27..])?.trim_end_matches('\0').to_string();
+        let version = u32::from_le_bytes(payload[21..25].try_into().unwrap());
+        let name = std::str::from_utf8(&payload[25..])?
+            .trim_end_matches('\0')
+            .to_string();
         Ok(FileMetadata {
             vid,
             size,
@@ -490,6 +483,7 @@ impl Brain {
             crc,
             file_type,
             timestamp,
+            version,
             name,
         })
     }
@@ -535,6 +529,39 @@ impl Brain {
         Ok(())
     }
 
+    pub fn download_file(
+        &mut self,
+        target: TransferTarget,
+        file_type: FileType,
+        vid: Vid,
+        remote_name: &str,
+        address: u32,
+    ) -> Result<Vec<u8>> {
+        let meta = self.initialize_file_transfer(
+            TransferDirection::Download,
+            target,
+            vid,
+            true,
+            0,
+            address,
+            0,
+            0x01000000,
+            file_type,
+            remote_name,
+            SystemTime::now(),
+        )?;
+        let size = meta.file_size as usize;
+        let mut vec: Vec<u8> = Vec::with_capacity(size as usize);
+        let max_packet_size = meta.max_packet_size / 2;
+        let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
+        for i in (0..size).step_by(max_packet_size as usize) {
+            let end = size.min(i + max_packet_size as usize);
+            self.read_file_transfer_part(&mut vec[i..end], address + i as u32)?;
+        }
+        self.complete_file_transfer(UploadAction::Nothing)?;
+        Ok(vec)
+    }
+
     pub fn link_file_transfer(&mut self, name: &str, vid: Vid) -> Result<PacketResponse> {
         let mut packet = self
             .connection
@@ -559,11 +586,11 @@ impl Brain {
         name: &str,
         timestamp: SystemTime,
     ) -> Result<UploadMeta> {
-        assert!(name.len() <= 24);
+        assert!(name.len() < 24);
         assert!(name.len() > 0);
         let mut packet = self
             .connection
-            .begin_packet(PacketId::FileTransferInitialize, 52);
+            .begin_packet(PacketId::FileTransferInitialize, 28 + name.len() + 1);
         packet.write_u8(direction.get_id())?;
         packet.write_u8(target.get_id())?;
         packet.write_u8(vid.get_id())?;
@@ -580,7 +607,7 @@ impl Brain {
                 / 1000) as u32,
         )?;
         packet.write_u32(version)?;
-        packet.write_padded_str(name, 24)?;
+        packet.write_str(name, 24)?;
         let response = packet.send()?;
         let payload = response.get_data();
         Ok(UploadMeta {
@@ -597,18 +624,34 @@ impl Brain {
         packet.write_u32(address)?;
         packet.write(slice)?;
         packet.write_u8(0)?;
+        packet.send()?;
+        Ok(())
+    }
+
+    pub fn read_file_transfer_part(&mut self, slice: &mut [u8], address: u32) -> Result<()> {
+        let mut packet = self
+            .connection
+            .begin_packet(PacketId::FileTransferWrite, 4 + slice.len() + 1);
+        packet.write_u32(address)?;
+        packet.write_u16(slice.len() as u16)?;
+        let response = packet.send()?;
+        slice.copy_from_slice(&response.get_data()[2..]);
         Ok(())
     }
 
     pub fn complete_file_transfer(&mut self, after: UploadAction) -> Result<()> {
-        let mut packet = self.connection.begin_packet(PacketId::FileTransferComplete, 1);
+        let mut packet = self
+            .connection
+            .begin_packet(PacketId::FileTransferComplete, 1);
         packet.write_u8(after as u8)?;
         packet.send()?;
         Ok(())
     }
 
     pub fn get_system_version(&mut self) -> Result<SystemVersion> {
-        self.connection.raw.write(&[0xc9, 0x36, 0xb8, 0x47, PacketId::GetSystemVersion as u8])?;
+        self.connection
+            .raw
+            .write(&[0xc9, 0x36, 0xb8, 0x47, PacketId::GetSystemVersion as u8])?;
         const OFFSET: usize = 4;
 
         let mut response = [0_u8; OFFSET + 8];
@@ -627,9 +670,7 @@ impl Brain {
     }
 
     pub fn get_kernel_variable(&mut self, variable: KernelVariable) -> Result<String> {
-        let mut packet = self
-            .connection
-            .begin_packet(PacketId::GetKernelVariable, 1);
+        let mut packet = self.connection.begin_packet(PacketId::GetKernelVariable, 1);
         packet.write_u8(variable.get_id())?;
         Ok(std::str::from_utf8(packet.send()?.get_data())
             .unwrap()
@@ -657,19 +698,18 @@ impl Brain {
             .begin_packet(PacketId::GetSystemStatus, 0)
             .send()?;
         let data = response.get_data();
+        println!("odd byte: {}", data[0]);
         Ok(SystemStatus::new(
-            Version::new_from_array((&data[0..4]).try_into()?),
-            Version::new_from_array((&data[4..8]).try_into()?),
-            Version::new_from_array((&data[8..12]).try_into()?),
-            data[12],
-            data[13],
+            Version::new_from_array((&data[1..5]).try_into()?),
+            Version::new_from_array((&data[5..9]).try_into()?),
+            Version::new_from_array((&data[9..13]).try_into()?),
+            data[16],
+            u32::from_le_bytes((&data[17..21]).try_into()?),
         ))
     }
 
     pub fn get_directory_count(&mut self, vid: Vid, option: u8) -> Result<u16> {
-        let mut packet = self
-            .connection
-            .begin_packet(PacketId::GetDirectoryCount, 2);
+        let mut packet = self.connection.begin_packet(PacketId::GetDirectoryCount, 2);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(option)?;
         let response = packet.send()?;
@@ -677,15 +717,13 @@ impl Brain {
         Ok(u16::from_le_bytes(data[..2].try_into()?))
     }
 
-    pub fn get_file_metadata_by_index(&mut self, index: u8, option: u8) -> Result<FileMetadata2> {
-        let mut packet = self
-            .connection
-            .begin_packet(PacketId::GetDirectoryCount, 2);
+    pub fn get_file_metadata_by_index(&mut self, index: u8, option: u8) -> Result<FileMetadata> {
+        let mut packet = self.connection.begin_packet(PacketId::GetDirectoryCount, 2);
         packet.write_u8(index)?;
         packet.write_u8(option)?;
         let response = packet.send()?;
         let payload = response.get_data();
-        let index = payload[0];
+        let vid = payload[0].into();
         let size = u32::from_le_bytes(payload[1..5].try_into().unwrap());
         let addr = u32::from_le_bytes(payload[5..9].try_into().unwrap());
         let crc = u32::from_le_bytes(payload[9..13].try_into().unwrap());
@@ -697,12 +735,12 @@ impl Brain {
             .add(Duration::from_millis(
                 (u32::from_le_bytes(payload[17..21].try_into().unwrap()) as u64) * 1000_u64,
             ));
-        let version = u32::from_le_bytes(payload[21..25].try_into().unwrap()).to_string();
+        let version = u32::from_le_bytes(payload[21..25].try_into().unwrap());
         let name = std::str::from_utf8(&payload[25..49])?
             .trim_end_matches('\0')
             .to_string();
-        Ok(FileMetadata2 {
-            index,
+        Ok(FileMetadata {
+            vid,
             size,
             addr,
             crc,
@@ -714,9 +752,7 @@ impl Brain {
     }
 
     pub fn execute_program(&mut self, vid: Vid, options: u8, file: &str) -> Result<()> {
-        let mut packet = self
-            .connection
-            .begin_packet(PacketId::ExecuteProgram, 26);
+        let mut packet = self.connection.begin_packet(PacketId::ExecuteProgram, 26);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(options)?;
         packet.write_padded_str(file, 24)?;
@@ -725,9 +761,7 @@ impl Brain {
     }
 
     pub fn delete_file(&mut self, vid: Vid, options: u8, file: &str) -> Result<()> {
-        let mut packet = self
-            .connection
-            .begin_packet(PacketId::DeleteFile, 26);
+        let mut packet = self.connection.begin_packet(PacketId::DeleteFile, 26);
         packet.write_u8(vid.get_id())?;
         packet.write_u8(options)?;
         packet.write_padded_str(file, 24)?;
@@ -737,9 +771,7 @@ impl Brain {
     }
 
     pub fn manage_competition(&mut self, mode: CompetitionStatus) -> Result<()> {
-        let mut packet = self
-            .connection
-            .begin_packet(PacketId::ManageCompetition, 5);
+        let mut packet = self.connection.begin_packet(PacketId::ManageCompetition, 5);
         packet.write_u8(mode as u8)?;
         packet.pad(4)?; // todo: what are these bytes?
         packet.send()?;

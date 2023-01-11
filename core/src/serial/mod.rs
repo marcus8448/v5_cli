@@ -1,10 +1,10 @@
 pub mod program;
 pub mod system;
 
-use std::sync::atomic::{AtomicU8, Ordering};
 use crc::{Crc, CRC_16_IBM_3740, CRC_16_XMODEM, CRC_32_BZIP2};
 use log::warn;
-use serialport::{DataBits, Parity, SerialPort, SerialPortType, FlowControl};
+use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
@@ -24,9 +24,9 @@ impl PortType {
         return match self {
             PortType::User | PortType::Controller => {
                 return horrible == 1;
-            },
+            }
             PortType::System => true,
-        }
+        };
     }
 
     #[cfg(all(not(target_os = "linux")))]
@@ -42,7 +42,16 @@ impl PortType {
 pub fn find_port(port_type: PortType) -> Option<String> {
     for p in serialport::available_ports().expect("Failed to obtain list of ports!") {
         if let SerialPortType::UsbPort(info) = p.port_type {
-            if info.pid == 0x0501 && info.vid == 0x2888 && info.product.map(|f| port_type.match_name(&f)).unwrap_or_else(|| { warn!("skipping type check"); return true;}) {
+            if info.pid == 0x0501
+                && info.vid == 0x2888
+                && info
+                    .product
+                    .map(|f| port_type.match_name(&f))
+                    .unwrap_or_else(|| {
+                        warn!("skipping type check");
+                        return true;
+                    })
+            {
                 return Some(p.port_name);
             }
         }
@@ -93,6 +102,10 @@ pub fn open_robot_connection(port: Option<String>) -> program::Connection {
 pub fn connect_to_brain(port: Option<String>) -> system::Brain {
     let mut brain = system::Brain::new(open_serial_port(port, PortType::System));
     let version = brain.get_system_version().unwrap();
-    println!("{} ({})", version.get_version(), version.get_product().get_name());
+    println!(
+        "{} ({})",
+        version.get_version(),
+        version.get_product().get_name()
+    );
     brain
 }

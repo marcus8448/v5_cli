@@ -20,7 +20,7 @@ use v5_core::tokio;
 const UPLOAD: &str = "upload";
 const COLD_PACKAGE: &str = "cold";
 const HOT_PACKAGE: &str = "hot";
-const COLD_ADDRESS: &str = "hot-address";
+const COLD_ADDRESS: &str = "cold-address";
 const HOT_ADDRESS: &str = "hot-address";
 const NAME: &str = "name";
 const DESCRIPTION: &str = "description";
@@ -63,7 +63,7 @@ impl Plugin for UploadPlugin {
                 )
                 .arg(
                     Arg::new(HOT_PACKAGE)
-                        .short('h')
+                        // .short('h')
                         .help("Location of the hot package binary")
                         .default_value("bin/hot.package.bin")
                         .value_hint(ValueHint::FilePath)
@@ -92,7 +92,7 @@ impl Plugin for UploadPlugin {
                 )
                 .arg(
                     Arg::new(DESCRIPTION)
-                        .short('n')
+                        .short('d')
                         .help("Description of the program when uploading")
                         .default_value("???")
                         .value_parser(NonEmptyStringValueParser::new())
@@ -123,19 +123,20 @@ async fn upload_program(args: ArgMatches) {
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
-    let cold_package = std::fs::read(*args.get_one::<&str>(COLD_PACKAGE).unwrap()).unwrap();
-    let hot_package = std::fs::read(*args.get_one::<&str>(HOT_PACKAGE).unwrap()).unwrap();
+    let cold_package = std::fs::read(*args.get_one::<&String>(COLD_PACKAGE).unwrap()).unwrap();
+    let hot_package = std::fs::read(*args.get_one::<&String>(HOT_PACKAGE).unwrap()).unwrap();
     let cold_address =
-        u32::from_str_radix(*args.get_one::<&str>(COLD_ADDRESS).unwrap(), 16).unwrap();
-    let hot_address = u32::from_str_radix(*args.get_one::<&str>(HOT_ADDRESS).unwrap(), 16).unwrap();
-    let action = *args.get_one::<&str>(ACTION).unwrap();
+        u32::from_str_radix(*args.get_one::<&String>(COLD_ADDRESS).unwrap(), 16).unwrap();
+    let hot_address =
+        u32::from_str_radix(*args.get_one::<&String>(HOT_ADDRESS).unwrap(), 16).unwrap();
+    let action = *args.get_one::<&String>(ACTION).unwrap();
     let overwrite = true;
     let index = *args.get_one::<u8>(INDEX).unwrap();
     let timestamp = SystemTime::now();
     let cold_hash = base64::encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let file_name = format!("slot_{}.bin", index);
     let file_ini = format!("slot_{}.ini", index);
-    let action = UploadAction::try_from(action).unwrap();
+    let action = UploadAction::try_from(action.as_str()).unwrap();
 
     let compressed_cold = task::spawn(compress(cold_package));
     let compressed_hot = task::spawn(compress(hot_package));

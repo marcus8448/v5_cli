@@ -43,7 +43,7 @@ pub fn load_plugins() -> Vec<Box<dyn Plugin>> {
         .unwrap()
         .to_path_buf();
     path.push("plugins");
-        
+
     let path = path.as_path();
     if !path.exists() {
         std::fs::create_dir(path).expect("failed to create plugins directory");
