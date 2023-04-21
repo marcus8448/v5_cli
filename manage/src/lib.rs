@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
 use v5_core::error::Error;
@@ -53,10 +51,10 @@ impl Plugin for ManagePlugin {
         command: Command,
         registry: &mut HashMap<
             &'static str,
-            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
+            Box<fn(ArgMatches)>,
         >,
     ) -> Command {
-        registry.insert(MANAGE, Box::new(|f| Box::pin(manage(f))));
+        registry.insert(MANAGE, Box::new(manage));
         command.subcommand(
             Command::new(MANAGE)
                 .about("Manage the robot brain")
@@ -184,21 +182,21 @@ impl Plugin for ManagePlugin {
     }
 }
 
-async fn manage(args: ArgMatches) {
-    let mut brain =
+fn manage(args: ArgMatches) {
+    let brain =
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
-            STATUS => get_status(brain, args).await,
-            METADATA => get_metadata(brain, args).await,
-            LIST_FILES => list_files(brain, args).await,
-            STOP => stop_execution(brain, args).await,
-            RUN => execute_program(brain, args).await,
-            REMOVE_ALL_PROGRAMS => remove_all_programs(brain, args).await,
-            REMOVE_FILE => remove_file(brain, args).await,
-            REMOVE_PROGRAM => remove_program(brain, args).await,
-            KERNEL_VARIABLE => kernel_variable(brain, args).await,
-            CAPTURE => capture_screen(brain, args).await,
+            STATUS => get_status(brain),
+            METADATA => get_metadata(brain, args),
+            LIST_FILES => list_files(brain, args),
+            STOP => stop_execution(brain),
+            RUN => execute_program(brain, args),
+            REMOVE_ALL_PROGRAMS => remove_all_programs(brain, args),
+            REMOVE_FILE => remove_file(brain, args),
+            REMOVE_PROGRAM => remove_program(brain, args),
+            KERNEL_VARIABLE => kernel_variable(brain, args),
+            CAPTURE => capture_screen(brain, args),
             _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
         }
         .unwrap()
@@ -207,20 +205,20 @@ async fn manage(args: ArgMatches) {
     }
 }
 
-async fn get_status(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn get_status(mut brain: Brain) -> Result<()> {
     let status = brain.get_system_status()?;
     println!(
         "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
-        status.get_system_version(),
-        status.get_cpu0_version(),
-        status.get_cpu1_version(),
-        status.get_touch_version(),
-        status.get_system_id()
+        status.system,
+        status.cpu0,
+        status.cpu1,
+        status.touch,
+        status.system_id
     );
     Ok(())
 }
 
-async fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let metadata = brain.read_file_metadata(
         args.get_one::<String>(FILE_NAME)
             .expect("missing file name!")
@@ -242,7 +240,7 @@ async fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let amount = brain.get_directory_count(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
         *args.get_one::<u8>(OPTION).unwrap_or(&0),
@@ -253,19 +251,19 @@ async fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn stop_execution(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn stop_execution(mut brain: Brain) -> Result<()> {
     brain.execute_program(Vid::User, 0, "")?;
     Ok(())
 }
 
-async fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("no slot provided");
     brain.execute_program(vid, 0x80, format!("slot_{}.bin", slot).as_str())?;
     Ok(())
 }
 
-async fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let c = brain.get_directory_count(vid, 0)?;
     let mut vec = Vec::new();
@@ -279,7 +277,7 @@ async fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> 
     Ok(())
 }
 
-async fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let name = args
         .get_one::<String>(FILE_NAME)
@@ -289,7 +287,7 @@ async fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("missing slot");
     brain.delete_file(vid, 0, &format!("slot_{}.bin", slot))?;
@@ -297,11 +295,11 @@ async fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn kernel_variable(brain: Brain, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
-            GET => get_kernel_variable(brain, args).await,
-            SET => set_kernel_variable(brain, args).await,
+            GET => get_kernel_variable(brain, args),
+            SET => set_kernel_variable(brain, args),
             _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
         }
     } else {
@@ -309,14 +307,14 @@ async fn kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     }
 }
 
-async fn get_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn get_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = brain.get_kernel_variable(variable)?;
     println!("{}", value);
     Ok(())
 }
 
-async fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = args.get_one::<String>(VALUE).unwrap();
     let actual_value = brain.set_kernel_variable(variable, value.as_str())?;
@@ -325,6 +323,7 @@ async fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> 
     Ok(())
 }
 
-async fn capture_screen(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn capture_screen(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+    //todo
     Ok(())
 }

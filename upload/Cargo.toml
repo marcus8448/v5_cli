@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 v5_core = { path = "../core" }
-base64 = "0.20"
-extendhash = "1.0"
-flate2 = "1.0"
+base64 = "0.21"
+extendhash = "1"
+flate2 = "1"
 rust-ini = "0.18"

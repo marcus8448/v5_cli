@@ -2,9 +2,6 @@ use clap::{ArgMatches, Command};
 use libloading::Library;
 use log::error;
 use std::collections::HashMap;
-use std::future::Future;
-use std::path::Path;
-use std::pin::Pin;
 
 #[no_mangle]
 pub static mut DEFAULT_PLUGIN_REF: Option<
@@ -31,7 +28,7 @@ pub trait Plugin {
         command: Command,
         registry: &mut HashMap<
             &'static str,
-            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
+            Box<fn(ArgMatches)>,
         >,
     ) -> Command;
 }

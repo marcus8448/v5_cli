@@ -1,10 +1,9 @@
 pub mod program;
 pub mod system;
 
-use crc::{Crc, CRC_16_IBM_3740, CRC_16_XMODEM, CRC_32_BZIP2};
+use crc::{Crc, CRC_16_XMODEM, CRC_32_BZIP2};
 use log::warn;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);

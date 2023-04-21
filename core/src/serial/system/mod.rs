@@ -397,11 +397,11 @@ impl Display for Version {
 }
 
 pub struct SystemStatus {
-    system: Version,
-    cpu0: Version,
-    cpu1: Version,
-    touch: u8,
-    system_id: u32,
+    pub system: Version,
+    pub cpu0: Version,
+    pub cpu1: Version,
+    pub touch: u8,
+    pub system_id: u32,
 }
 
 impl SystemStatus {
@@ -413,26 +413,6 @@ impl SystemStatus {
             touch,
             system_id,
         }
-    }
-
-    pub fn get_system_version(&self) -> &Version {
-        &self.system
-    }
-
-    pub fn get_cpu0_version(&self) -> &Version {
-        &self.cpu0
-    }
-
-    pub fn get_cpu1_version(&self) -> &Version {
-        &self.cpu1
-    }
-
-    pub fn get_touch_version(&self) -> u8 {
-        self.touch
-    }
-
-    pub fn get_system_id(&self) -> u32 {
-        self.system_id
     }
 }
 
@@ -493,7 +473,7 @@ impl Brain {
         target: TransferTarget,
         file_type: FileType,
         vid: Vid,
-        file: &[u8],
+        file_bytes: &[u8],
         remote_name: &str,
         address: u32,
         crc: u32,
@@ -507,7 +487,7 @@ impl Brain {
             target,
             vid,
             overwrite,
-            file.len() as u32,
+            file_bytes.len() as u32,
             address,
             crc,
             0b00_01_00,
@@ -515,15 +495,15 @@ impl Brain {
             remote_name,
             timestamp,
         )?;
-        assert!(meta.file_size >= file.len() as u32);
+        assert!(meta.file_size >= file_bytes.len() as u32);
         if let Some((name, vid)) = linked_file {
             self.link_file_transfer(name, vid)?;
         }
-        let max_packet_size = meta.max_packet_size / 2;
-        let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
-        for i in (0..file.len()).step_by(max_packet_size as usize) {
-            let end = file.len().min(i + max_packet_size as usize);
-            self.write_file_transfer_part(&file[i..end], address + i as u32)?;
+        let packet_chunk_size = meta.max_packet_size / 2;
+        let max_packet_size = packet_chunk_size - (packet_chunk_size % 4); //4 byte alignment
+        for i in (0..file_bytes.len()).step_by(max_packet_size as usize) {
+            let end = file_bytes.len().min(i + max_packet_size as usize);
+            self.write_file_transfer_part(&file_bytes[i..end], address + i as u32)?;
         }
         self.complete_file_transfer(action)?;
         Ok(())

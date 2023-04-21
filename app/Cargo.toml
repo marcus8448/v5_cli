@@ -11,4 +11,4 @@ v5_manage = { path = "../manage" }
 v5_terminal = { path = "../terminal" }
 env_logger = "0.10"
 libloading = "0.7"
-serialport = "4.2"
+serialport = "4"

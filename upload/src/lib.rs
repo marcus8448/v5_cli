@@ -1,10 +1,12 @@
-use flate2::{Compress, Compression, FlushCompress};
+use flate2::Compression;
 use ini::Ini;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
+use std::io;
+use std::io::Read;
+use std::path::Path;
+use std::thread::JoinHandle;
 use std::time::SystemTime;
-use tokio::task;
+use base64::Engine;
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueHint};
 use v5_core::log::info;
@@ -13,7 +15,6 @@ use v5_core::serial::system::{FileType, TransferTarget, UploadAction, Vid};
 use v5_core::serial::CRC32;
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
-use v5_core::tokio;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
 
@@ -45,10 +46,10 @@ impl Plugin for UploadPlugin {
         command: Command,
         registry: &mut HashMap<
             &'static str,
-            Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>,
+            Box<fn(ArgMatches)>,
         >,
     ) -> Command {
-        registry.insert(UPLOAD, Box::new(|f| Box::pin(upload_program(f))));
+        registry.insert(UPLOAD, Box::new(upload_program));
         command.subcommand(
             Command::new(UPLOAD)
                 .about("Uploads a program to the robot")
@@ -118,13 +119,13 @@ impl Plugin for UploadPlugin {
     }
 }
 
-async fn upload_program(args: ArgMatches) {
+fn upload_program(args: ArgMatches) {
     let mut brain =
         v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
-    let cold_package = std::fs::read(*args.get_one::<&String>(COLD_PACKAGE).unwrap()).unwrap();
-    let hot_package = std::fs::read(*args.get_one::<&String>(HOT_PACKAGE).unwrap()).unwrap();
+    let cold_package_path = *args.get_one::<&String>(COLD_PACKAGE).unwrap();
+    let hot_package_path = *args.get_one::<&String>(HOT_PACKAGE).unwrap();
     let cold_address =
         u32::from_str_radix(*args.get_one::<&String>(COLD_ADDRESS).unwrap(), 16).unwrap();
     let hot_address =
@@ -133,15 +134,14 @@ async fn upload_program(args: ArgMatches) {
     let overwrite = true;
     let index = *args.get_one::<u8>(INDEX).unwrap();
     let timestamp = SystemTime::now();
-    let cold_hash = base64::encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let file_name = format!("slot_{}.bin", index);
     let file_ini = format!("slot_{}.ini", index);
     let action = UploadAction::try_from(action.as_str()).unwrap();
 
-    let compressed_cold = task::spawn(compress(cold_package));
-    let compressed_hot = task::spawn(compress(hot_package));
+    let cold_handle: JoinHandle<Result<Vec<u8>, io::Error>> = std::thread::spawn(move || load_compressed(cold_package_path)); //probably overkill
+    let hot_handle: JoinHandle<Result<Vec<u8>, io::Error>> = std::thread::spawn(move || load_compressed(hot_package_path));
 
-    let ini = generate_ini(
+    let ini = generate_program_ini(
         "0.1.0",
         "none",
         program_name,
@@ -152,7 +152,8 @@ async fn upload_program(args: ArgMatches) {
         timestamp,
     );
 
-    let cold_package = compressed_cold.await.unwrap();
+    let cold_package = cold_handle.join().unwrap().unwrap();
+    let cold_hash = base64::engine::general_purpose::STANDARD.encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let cold_len = cold_package.len();
     let crc = CRC32.checksum(&cold_package);
     let available_package = brain
@@ -177,7 +178,7 @@ async fn upload_program(args: ArgMatches) {
             .unwrap();
     }
 
-    let hot_package = compressed_hot.await.unwrap();
+    let hot_package = hot_handle.join().unwrap().unwrap();
     let crc = CRC32.checksum(&hot_package);
     brain
         .upload_file(
@@ -214,26 +215,14 @@ async fn upload_program(args: ArgMatches) {
         .unwrap();
 }
 
-async fn compress(data: Vec<u8>) -> Vec<u8> {
-    let mut compress = Compress::new(Compression::new(9), true);
-    let mut out = Vec::new();
-    let len = data.len();
-    out.reserve_exact(data.len());
-    loop {
-        compress
-            .compress_vec(&data, &mut out, FlushCompress::None)
-            .unwrap();
-        if compress.total_in() == len as u64 {
-            break;
-        } else {
-            out.reserve_exact(len - compress.total_in() as usize);
-        }
-    }
-    out.shrink_to_fit();
-    out
+fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
+    let mut vec = Vec::new();
+    flate2::read::ZlibEncoder::new(std::fs::File::open(path)?, Compression::best()).read_to_end(&mut vec)?;
+    vec.shrink_to_fit();
+    return Ok(vec);
 }
 
-fn generate_ini(
+fn generate_program_ini(
     project_version: &str,
     ide: &str,
     name: &str,

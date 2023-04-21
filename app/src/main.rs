@@ -1,11 +1,7 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command};
-use v5_core::log::error;
 use v5_core::plugin::Plugin;
 use v5_core::serial::print_out_ports;
-use v5_core::tokio;
 
 fn main() {
     let mut command = Command::new("robot")
@@ -33,7 +29,7 @@ fn main() {
 
     let plugins = v5_core::plugin::load_plugins();
     let mut registry =
-        HashMap::<&'static str, Box<fn(ArgMatches) -> Pin<Box<dyn Future<Output = ()>>>>>::new();
+        HashMap::<&'static str, Box<fn(ArgMatches)>>::new();
     for plugin in plugins {
         command = plugin.create_commands(command, &mut registry);
     }
@@ -44,11 +40,7 @@ fn main() {
             command.print_help().unwrap();
         }
         Some((name, matches)) => {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(registry.get(name).unwrap()(matches.clone()));
+            registry.get(name).unwrap()(matches.clone());
         }
     }
 }

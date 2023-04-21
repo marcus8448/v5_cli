@@ -7,4 +7,4 @@ version = "0.1.0"
 
 [dependencies]
 v5_core = { path = "../core" }
-base85 = "1.1"
+base85 = "1"
