@@ -1,13 +1,22 @@
-pub mod program;
-pub mod system;
+mod bluetooth;
+mod serial;
 
-use crc::{Crc, CRC_16_XMODEM, CRC_32_BZIP2};
-use log::warn;
+use std::io::Read;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType};
 use std::time::Duration;
+use btleplug::api::{Central, Manager, Peripheral};
+use futures::StreamExt;
+use log::warn;
 
-pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
-pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
+pub trait RobotConnection {
+    fn system_connection(self) -> Box<dyn SerialConnection>;
+
+    fn user_connection(self) -> Box<dyn SerialConnection>;
+
+    fn dual_connection(self) -> (Box<dyn SerialConnection>, Box<dyn SerialConnection>); //serial, user
+}
+
+pub trait SerialConnection: std::io::Read + std::io::Write {}
 
 pub enum PortType {
     User,
@@ -18,8 +27,8 @@ pub enum PortType {
 impl PortType {
     #[cfg(all(target_os = "linux"))]
     pub fn match_name(&self, _name: &str) -> bool {
-        static HORRIBLE: AtomicU8 = AtomicU8::new(0);
-        let horrible = HORRIBLE.fetch_add(1, Ordering::Relaxed);
+        static HORRIBLE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        let horrible = HORRIBLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return match self {
             PortType::User | PortType::Controller => {
                 return horrible == 1;
@@ -44,12 +53,12 @@ pub fn find_port(port_type: PortType) -> Option<String> {
             if info.pid == 0x0501
                 && info.vid == 0x2888
                 && info
-                    .product
-                    .map(|f| port_type.match_name(&f))
-                    .unwrap_or_else(|| {
-                        warn!("skipping type check");
-                        return true;
-                    })
+                .product
+                .map(|f| port_type.match_name(&f))
+                .unwrap_or_else(|| {
+                    warn!("skipping type check");
+                    return true;
+                })
             {
                 return Some(p.port_name);
             }
@@ -84,19 +93,16 @@ pub fn open_serial_port(port: Option<String>, port_type: PortType) -> Box<dyn Se
             .expect("Unable to find V5 port!"),
         115200,
     )
-    .parity(Parity::None)
-    .data_bits(DataBits::Eight)
-    .timeout(Duration::from_secs(5))
-    .flow_control(FlowControl::None)
-    .open()
-    .expect("Failed to connect to robot!");
+        .parity(Parity::None)
+        .data_bits(DataBits::Eight)
+        .timeout(Duration::from_secs(5))
+        .flow_control(FlowControl::None)
+        .open()
+        .expect("Failed to connect to robot!");
     serial_port.write_data_terminal_ready(true).unwrap();
     return serial_port;
 }
 
-pub fn open_robot_connection(port: Option<String>) -> program::Connection {
-    program::Connection::new(open_serial_port(port, PortType::User))
-}
 
 pub fn connect_to_brain(port: Option<String>) -> system::Brain {
     let mut brain = system::Brain::new(open_serial_port(port, PortType::System));
@@ -108,3 +114,4 @@ pub fn connect_to_brain(port: Option<String>) -> system::Brain {
     );
     brain
 }
+

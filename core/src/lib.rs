@@ -1,6 +1,8 @@
 pub mod error;
 pub mod plugin;
-pub mod serial;
+pub mod buffer;
+pub mod packet;
+pub mod connection;
 
 pub extern crate clap;
 pub extern crate crc;

@@ -4,9 +4,7 @@ use log::error;
 use std::collections::HashMap;
 
 #[no_mangle]
-pub static mut DEFAULT_PLUGIN_REF: Option<
-    Box<unsafe extern "C" fn(plugins: &mut Vec<Box<dyn Plugin>>)>,
-> = None;
+pub static mut DEFAULT_PLUGIN_REF: Option<Box<unsafe extern "C" fn(plugins: &mut Vec<Box<dyn Plugin>>)>> = None;
 static mut EXTERNAL_LIBRARIES: Vec<Library> = Vec::new(); // We DO NOT want to drop the library
 pub const PORT: &str = "port";
 

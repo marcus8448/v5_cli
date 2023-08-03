@@ -72,7 +72,7 @@ impl Plugin for CompetitionPlugin {
 
 fn competition(args: ArgMatches) {
     let brain =
-        v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
+        v5_core::packet::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     if let Some((command, args)) = args.subcommand() {
         match command {
             START => start(brain, args),

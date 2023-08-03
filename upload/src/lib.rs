@@ -12,7 +12,7 @@ use v5_core::clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueHint
 use v5_core::log::info;
 use v5_core::plugin::{Plugin, PORT};
 use v5_core::serial::system::{FileType, TransferTarget, UploadAction, Vid};
-use v5_core::serial::CRC32;
+use v5_core::packet::packet::CRC32;
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
@@ -121,7 +121,7 @@ impl Plugin for UploadPlugin {
 
 fn upload_program(args: ArgMatches) {
     let mut brain =
-        v5_core::serial::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
+        v5_core::packet::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
     let cold_package_path = *args.get_one::<&String>(COLD_PACKAGE).unwrap();

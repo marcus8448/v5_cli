@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command};
 use v5_core::plugin::Plugin;
-use v5_core::serial::print_out_ports;
+use v5_core::packet::print_out_ports;
 
 fn main() {
     let mut command = Command::new("robot")

@@ -1,2 +1,3 @@
 [workspace]
 members = ["core", "upload", "manage", "terminal", "competition", "app"]
+resolver = "2"

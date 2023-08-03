@@ -10,5 +10,5 @@ v5_upload = { path = "../upload" }
 v5_manage = { path = "../manage" }
 v5_terminal = { path = "../terminal" }
 env_logger = "0.10"
-libloading = "0.7"
+libloading = "0.8"
 serialport = "4"
