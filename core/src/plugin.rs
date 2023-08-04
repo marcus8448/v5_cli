@@ -1,12 +1,20 @@
+use std::collections::HashMap;
+
 use clap::{ArgMatches, Command};
 use libloading::Library;
 use log::error;
-use std::collections::HashMap;
+
+use crate::connection::RobotConnection;
 
 #[no_mangle]
-pub static mut DEFAULT_PLUGIN_REF: Option<Box<unsafe extern "C" fn(plugins: &mut Vec<Box<dyn Plugin>>)>> = None;
+pub static mut DEFAULT_PLUGIN_REF: Option<
+    Box<unsafe extern "C" fn(plugins: &mut Vec<Box<dyn Plugin>>)>,
+> = None;
 static mut EXTERNAL_LIBRARIES: Vec<Library> = Vec::new(); // We DO NOT want to drop the library
 pub const PORT: &str = "port";
+
+pub type CommandRegistry = HashMap<&'static str, Box<ExecutableCommand>>;
+pub type ExecutableCommand = fn(ArgMatches, RobotConnection);
 
 #[macro_export]
 macro_rules! export_plugin {
@@ -21,14 +29,7 @@ macro_rules! export_plugin {
 
 pub trait Plugin {
     fn get_name(&self) -> &'static str;
-    fn create_commands(
-        &self,
-        command: Command,
-        registry: &mut HashMap<
-            &'static str,
-            Box<fn(ArgMatches)>,
-        >,
-    ) -> Command;
+    fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command;
 }
 
 pub fn load_plugins() -> Vec<Box<dyn Plugin>> {

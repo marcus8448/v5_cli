@@ -1,28 +1,125 @@
+use std::mem::size_of;
+
+use crc::{Crc, CRC_16_XMODEM};
+
+use crate::buffer::{FixedReadBuffer, ReadBuffer, WriteBuffer};
+use crate::connection::SerialConnection;
+use crate::error::Result;
+
 pub mod competition;
 pub mod filesystem;
 pub mod system;
 
-use std::io;
-use std::io::{Error, ErrorKind};
-use crc::{Crc, CRC_16_XMODEM, CRC_32_BZIP2};
-use crate::buffer::{ReadBuffer, WriteBuffer};
+pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 
-const PACKET_HEADER_LENGTH: usize = 4;
-const PACKET_HEADER: &[u8; PACKET_HEADER_LENGTH] = &[0xc9, 0x36, 0xb8, 0x47];
+const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 const EXT_PACKET_ID: u8 = 0x56;
 
 pub trait Packet<const ID: u8> {
     type Response;
 
-    fn get_size(&self) -> usize;
-
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()>;
-
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response>;
+    fn send_len(&self) -> usize;
 
     fn is_simple() -> bool {
         false
+    }
+
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()>;
+
+    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response>;
+
+    fn send(&mut self, connection: &mut Box<dyn SerialConnection>) -> Result<Self::Response> {
+        let len = self.send_len();
+        let mut buffer =
+            Vec::with_capacity(4 + 1 + 1 + if len < 0x80 { 1 } else { 2 } + len + size_of::<u16>());
+        buffer.write_raw(PACKET_HEADER);
+
+        if Self::is_simple() {
+            buffer.write_u8(ID);
+        } else {
+            buffer.write_u8(EXT_PACKET_ID);
+            buffer.write_u8(ID);
+
+            if len < 0x80 {
+                buffer.write_u8(len as u8);
+            } else {
+                buffer.write_u8((len >> 8 | 0x80) as u8);
+                buffer.write_u8((len & 0xff) as u8);
+            }
+
+            self.write_buffer(&mut buffer)?;
+
+            buffer.write_u16(CRC16.checksum(&buffer));
+        }
+
+        println!("sent: {:?}", buffer);
+        connection.write_all(&buffer)?;
+        connection.flush()?;
+
+        let mut buf = [0_u8; 1];
+
+        loop {
+            println!("awaiting response");
+
+            connection.read_exact(&mut buf)?;
+
+            println!("a{}", buf[0]);
+            if buf[0] != RESPONSE_HEADER[0] {
+                continue;
+            }
+
+            connection.read_exact(&mut buf)?;
+            println!("b{}", buf[0]);
+            if buf[0] != RESPONSE_HEADER[1] {
+                continue;
+            }
+            break;
+        }
+
+        println!("received header");
+
+        let mut payload = Vec::with_capacity(64);
+        payload.extend_from_slice(&RESPONSE_HEADER);
+
+        let mut metadata = [0_u8; 2];
+
+        connection.read_exact(&mut metadata)?;
+        let command = metadata[0];
+        let mut len: usize = metadata[1] as usize;
+
+        payload.extend_from_slice(&metadata);
+
+        if !Self::is_simple() && len & 0x80 != 0 {
+            connection.read_exact(&mut buf)?;
+            len = ((len & 0x7f) << 8) + buf[0] as usize;
+            payload.push(buf[0]);
+        }
+
+        let start = payload.len();
+        payload.reserve(len);
+        payload.resize(start + len, 0_u8);
+
+        connection.read_exact(&mut payload[start..])?;
+
+        println!("received data: {:?}", &payload);
+
+        if Self::is_simple() {
+            assert_eq!(command, ID);
+            Ok(self.read_response(&mut FixedReadBuffer::new(&payload[start + 1..]))?)
+        } else {
+            assert_eq!(command, EXT_PACKET_ID);
+            assert_eq!(ID, payload[start]);
+            assert_eq!(CRC16.checksum(&payload), 0);
+
+            if let Some(nack) = Nack::maybe_find(payload[start + 1]) {
+                println!("NACK: {}", nack as u8);
+                return Err(crate::error::Error::Generic("NACK"));
+            }
+            Ok(self.read_response(&mut FixedReadBuffer::new(
+                &payload[start + 2..payload.len() - 2],
+            ))?)
+        }
     }
 }
 
@@ -66,93 +163,3 @@ impl Nack {
         }
     }
 }
-
-pub fn send(mut self) -> io::Result<PacketResponse> {
-    let len = self.data.len();
-    if LENGTH < 0x80 { //fixme: simple
-        self.data[6] = (LENGTH as u8).to_le();
-    } else {
-        self.data[6] = ((LENGTH >> 8 | 0x80) as u8).to_le();
-        self.data[7] = ((LENGTH & 0xff) as u8).to_le();
-    }
-
-    let sum = &CRC16.checksum(&self.data[..self.pos]).to_le_bytes();
-    self.data[self.pos] = sum[1];
-    self.data[self.pos + 1] = sum[0];
-    self.pos += 2;
-    assert_eq!(self.pos, len);
-
-    println!("sent: {:?}", self.data);
-    let x = self.connection.raw.write(&self.data)?;
-    assert_eq!(x, self.data.len());
-    self.connection.flush()?;
-
-    let sent_command = self.data[5];
-    let mut payload = Vec::from(self.data);
-    payload.clear();
-    payload.resize(4, 0_u8);
-
-    loop {
-        println!("awaiting response");
-        self.connection.raw.read_exact(&mut payload[0..1]).unwrap();
-        println!("a{}", payload[0]);
-        if payload[0] != RESPONSE_HEADER[0] {
-            continue;
-        }
-        self.connection.raw.read_exact(&mut payload[1..2]).unwrap();
-        println!("b{}", payload[1]);
-        if payload[1] != RESPONSE_HEADER[1] {
-            continue;
-        }
-        break;
-    }
-    println!("received header");
-
-    self.connection.raw.read_exact(&mut payload[2..3]).unwrap();
-    let command = payload[2];
-    println!("command: {}", command);
-    self.connection.raw.read_exact(&mut payload[3..4]).unwrap();
-    let mut len: u16 = payload[3] as u16;
-    let data_start: usize;
-    if command == EXT_PACKET_ID && len & 0x80 == 0x80 {
-        payload.push(0);
-        self.connection.raw.read_exact(&mut payload[4..5]).unwrap();
-        len = ((len & 0x7f) << 8) + payload[4] as u16;
-
-        data_start = 5;
-    } else {
-        data_start = 4;
-    }
-    println!("length: {}", len);
-    payload.resize(payload.len() + len as usize, 0_u8);
-    self.connection
-        .raw
-        .read_exact(&mut payload[data_start..])
-        .unwrap();
-    assert_eq!(command, EXT_PACKET_ID);
-    assert_eq!(sent_command, payload[data_start]);
-    assert_eq!(CRC16.checksum(&payload), 0);
-
-    println!("recieved data: {:?}", &payload);
-
-    if let Some(nack) = Nack::maybe_find(payload[(data_start + 1)]) {
-        return Err(Error::new(
-            ErrorKind::Unsupported,
-            format!("NACK: {:?}", nack),
-        ));
-    }
-
-    //todo: check length
-
-    let data_end = payload.len() - 2;
-
-    Ok(PacketResponse {
-        command,
-        payload,
-        data_start: data_start + 2, // real command, NACK
-        data_end,
-    })
-}
-
-pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
-pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);

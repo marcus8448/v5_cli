@@ -1,4 +1,5 @@
 use std::io;
+
 use crate::buffer::{ReadBuffer, WriteBuffer};
 use crate::error::{Error, Result};
 use crate::packet::Packet;
@@ -31,30 +32,28 @@ impl Into<u8> for CompetitionState {
 }
 
 pub struct ManageCompetition {
-    state: CompetitionState
+    state: CompetitionState,
 }
 
 impl ManageCompetition {
     pub fn new(state: CompetitionState) -> Self {
-        Self {
-            state
-        }
+        Self { state }
     }
 }
 
 impl Packet<0x2E> for ManageCompetition {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         5
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.state.into())?;
-        buffer.write_u8(0)?;
-        buffer.write_u8(0)?;
-        buffer.write_u8(0)?;
-        buffer.write_u8(0)?;
+        buffer.write_u8(self.state.into());
+        buffer.write_u8(0);
+        buffer.write_u8(0);
+        buffer.write_u8(0);
+        buffer.write_u8(0);
         Ok(())
     }
 

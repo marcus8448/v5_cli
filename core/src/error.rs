@@ -31,9 +31,14 @@ impl From<btleplug::Error> for Error {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Error::External(Box::new(value))
+    }
+}
+
 impl From<Error> for std::io::Error {
     fn from(value: Error) -> Self {
         std::io::Error::new(std::io::ErrorKind::InvalidData, value)
     }
 }
-

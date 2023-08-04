@@ -1,7 +1,8 @@
-use std::fmt::{Display, Formatter};
-use std::time::{SystemTime, UNIX_EPOCH};
 use core::time::Duration;
+use std::fmt::{Display, Formatter};
 use std::ops::Add;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::buffer::{ReadBuffer, WriteBuffer};
 use crate::error::{Error, Result};
 use crate::packet::filesystem::Vid;
@@ -10,11 +11,14 @@ use crate::packet::Packet;
 const JAN_01_2000: Duration = Duration::from_secs(946684800);
 
 pub fn convert_to_vex_timestamp(timestamp: SystemTime) -> u32 {
-    u32::try_from((timestamp.duration_since(UNIX_EPOCH).unwrap() - JAN_01_2000).as_millis()).unwrap()
+    u32::try_from((timestamp.duration_since(UNIX_EPOCH).unwrap() - JAN_01_2000).as_millis())
+        .unwrap()
 }
 
 pub fn convert_from_vex_timestamp(timestamp: u32) -> SystemTime {
-    UNIX_EPOCH.add(JAN_01_2000).add(Duration::from_millis(timestamp as u64))
+    UNIX_EPOCH
+        .add(JAN_01_2000)
+        .add(Duration::from_millis(timestamp as u64))
 }
 
 #[repr(u8)]
@@ -37,7 +41,7 @@ impl Into<&'static str> for KernelVariable {
     fn into(self) -> &'static str {
         match self {
             KernelVariable::TeamNumber => "teamnumber",
-            KernelVariable::RobotName => "robotname"
+            KernelVariable::RobotName => "robotname",
         }
     }
 }
@@ -73,7 +77,28 @@ impl Product {
     }
 }
 
+pub struct SystemStatus {
+    pub system: Version,
+    pub cpu0: Version,
+    pub cpu1: Version,
+    pub touch: u8,
+    pub system_id: u32,
+}
+
+impl SystemStatus {
+    pub fn new(system: Version, cpu0: Version, cpu1: Version, touch: u8, system_id: u32) -> Self {
+        SystemStatus {
+            system,
+            cpu0,
+            cpu1,
+            touch,
+            system_id,
+        }
+    }
+}
+
 #[repr(u8)]
+#[derive(Copy, Clone)]
 pub enum Channel {
     Pit = 0,
     Download = 1,
@@ -97,13 +122,23 @@ impl Into<u8> for Channel {
     }
 }
 
-struct GetSystemVersion {}
+pub struct GetSystemVersion {}
+
+impl GetSystemVersion {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 
 impl Packet<0xA4> for GetSystemVersion {
     type Response = SystemVersion;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         0
+    }
+
+    fn is_simple() -> bool {
+        true
     }
 
     fn write_buffer(&self, _: &mut dyn WriteBuffer) -> std::io::Result<()> {
@@ -112,21 +147,17 @@ impl Packet<0xA4> for GetSystemVersion {
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
         Ok(SystemVersion {
-            major: buffer.read_u8()?,
-            minor: buffer.read_u8()?,
-            patch: buffer.read_u8()?,
-            a: buffer.read_u8()?,
-            b: buffer.read_u8()?,
-            product: Product::parse(buffer.read_u8()?, buffer.read_u8()?)?,
+            major: buffer.read_u8(),
+            minor: buffer.read_u8(),
+            patch: buffer.read_u8(),
+            a: buffer.read_u8(),
+            b: buffer.read_u8(),
+            product: Product::parse(buffer.read_u8(), buffer.read_u8())?,
         })
-    }
-
-    fn is_simple() -> bool {
-        true
     }
 }
 
-struct SystemVersion {
+pub struct SystemVersion {
     major: u8,
     minor: u8,
     patch: u8,
@@ -135,18 +166,18 @@ struct SystemVersion {
     product: Product,
 }
 
-struct ExecuteProgram<'a> {
+pub struct ExecuteProgram<'a> {
     vid: Vid,
     options: u8,
-    filename: &'a str
+    filename: &'a str,
 }
 
 impl<'a> ExecuteProgram<'a> {
-    fn new(vid: Vid, options: u8, filename: &str) -> Self {
+    pub fn new(vid: Vid, options: u8, filename: &'a str) -> Self {
         ExecuteProgram {
             vid,
             options,
-            filename
+            filename,
         }
     }
 }
@@ -154,14 +185,14 @@ impl<'a> ExecuteProgram<'a> {
 impl<'a> Packet<0x18> for ExecuteProgram<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         1 + 1 + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(self.options)?;
-        buffer.write_str(self.filename, 24)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(self.options);
+        buffer.write_str(self.filename, 24);
         Ok(())
     }
 
@@ -170,38 +201,31 @@ impl<'a> Packet<0x18> for ExecuteProgram<'a> {
     }
 }
 
-struct GetProduct<'a> {
-    vid: Vid,
-    option: u8,
-    filename: &'a str
-}
+pub struct GetProduct {}
 
-impl<'a> GetProduct<'a> {
-    fn new(vid: Vid, option: u8, filename: &str) -> Self {
-        GetProduct {
-            vid,
-            option,
-            filename
-        }
+impl GetProduct {
+    pub fn new() -> Self {
+        GetProduct {}
     }
 }
 
-impl<'a> Packet<0x21> for GetProduct<'a> {
+impl Packet<0x21> for GetProduct {
     type Response = Box<[u8]>;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         0
     }
 
     fn is_simple() -> bool {
         true
     }
+
     fn write_buffer(&self, _: &mut dyn WriteBuffer) -> std::io::Result<()> {
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
-        Ok(buffer.read_all())
+        Ok(Box::from(buffer.get_all()))
     }
 }
 
@@ -222,8 +246,7 @@ impl Display for Version {
     }
 }
 
-pub struct GetSystemStatus {
-}
+pub struct GetSystemStatus {}
 
 impl GetSystemStatus {
     pub fn new() -> Self {
@@ -232,9 +255,9 @@ impl GetSystemStatus {
 }
 
 impl Packet<0x22> for GetSystemStatus {
-    type Response = Version;
+    type Response = SystemStatus;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         0
     }
 
@@ -243,18 +266,41 @@ impl Packet<0x22> for GetSystemStatus {
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
-        Ok(Version {
-            major: buffer.read_u8()?,
-            minor: buffer.read_u8()?,
-            patch: buffer.read_u8()?,
-            extra: buffer.read_u8()?,
-        })
+        buffer.skip(1);
+        let system = Version {
+            major: buffer.read_u8(),
+            minor: buffer.read_u8(),
+            patch: buffer.read_u8(),
+            extra: buffer.read_u8(),
+        };
+        let cpu0 = Version {
+            major: buffer.read_u8(),
+            minor: buffer.read_u8(),
+            patch: buffer.read_u8(),
+            extra: buffer.read_u8(),
+        };
+        let cpu1 = Version {
+            major: buffer.read_u8(),
+            minor: buffer.read_u8(),
+            patch: buffer.read_u8(),
+            extra: buffer.read_u8(),
+        };
+        buffer.skip(3);
+        let touch = buffer.read_u8();
+        let id = buffer.read_u32();
+        Ok(SystemStatus::new(
+            system,
+            cpu0,
+            cpu1,
+            touch,
+            id
+        ))
     }
 }
 
 pub struct SendUserCommunications<'a> {
     channel: Channel,
-    payload: &'a [u8]
+    payload: &'a [u8],
 }
 
 impl<'a> SendUserCommunications<'a> {
@@ -268,14 +314,14 @@ impl<'a> SendUserCommunications<'a> {
 impl<'a> Packet<0x27> for SendUserCommunications<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         1 + 1 + self.payload.len()
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
-        buffer.write_u8(self.channel.into())?;
-        buffer.write_u8(0)?;
-        buffer.write(self.payload)?;
+        buffer.write_u8(self.channel.into());
+        buffer.write_u8(0);
+        buffer.write_raw(self.payload);
 
         Ok(())
     }
@@ -299,83 +345,78 @@ impl ReadUserCommunications {
 impl Packet<0x27> for ReadUserCommunications {
     type Response = Box<[u8]>;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         2
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
-        buffer.write_u8(self.channel.into())?;
-        buffer.write_u8(self.len)?;
+        buffer.write_u8(self.channel.into());
+        buffer.write_u8(self.len);
 
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
-        Ok(buffer.read_all())
+        Ok(Box::from(buffer.get_all()))
     }
 }
 
 // CopyScreenData = 0x28
 
 pub struct GetKernelVariable {
-    variable: KernelVariable
+    variable: KernelVariable,
 }
 
 impl GetKernelVariable {
     pub fn new(variable: KernelVariable) -> Self {
-        Self {
-            variable
-        }
+        Self { variable }
     }
 }
 
 impl Packet<0x2E> for GetKernelVariable {
     type Response = String;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         let name: &str = KernelVariable::into(self.variable);
         name.len() + 1
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         let name = self.variable.into();
-        buffer.write_str(name, name.len() + 1)?;
+        buffer.write_str(name, name.len() + 1);
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
-        Ok(buffer.read_str(128)?) // len unknown
+        Ok(buffer.read_str(128)) // len unknown
     }
 }
 
 pub struct SetKernelVariable<'a> {
     variable: KernelVariable,
-    payload: &'a str
+    payload: &'a str,
 }
 
 impl<'a> SetKernelVariable<'a> {
     pub fn new(variable: KernelVariable, payload: &'a str) -> Self {
         assert!(payload.len() < variable.get_max_len());
 
-        Self {
-            variable,
-            payload
-        }
+        Self { variable, payload }
     }
 }
 
 impl<'a> Packet<0xC1> for SetKernelVariable<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         let name: &str = KernelVariable::into(self.variable);
         name.len() + 1 + self.payload.len() + 1
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         let name = self.variable.into();
-        buffer.write_str(name, name.len() + 1)?;
-        buffer.write_str(self.payload, self.payload.len() + 1)?;
+        buffer.write_str(name, name.len() + 1);
+        buffer.write_str(self.payload, self.payload.len() + 1);
         Ok(())
     }
 

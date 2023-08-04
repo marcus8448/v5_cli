@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
 use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
+use v5_core::connection::{RobotConnection, SerialConnection};
 use v5_core::error::Error;
 use v5_core::log::error;
-use v5_core::plugin::{Plugin, PORT};
-use v5_core::serial::system::{Brain, KernelVariable, Vid};
+use v5_core::packet::filesystem::{DeleteFile, GetDirectoryCount, GetFileMetadataByIndex, GetFileMetadataByName, Vid};
+use v5_core::packet::Packet;
+use v5_core::packet::system::{ExecuteProgram, GetKernelVariable, GetSystemStatus, KernelVariable, SetKernelVariable};
+use v5_core::plugin::{CommandRegistry, Plugin};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
@@ -46,14 +48,7 @@ impl Plugin for ManagePlugin {
         MANAGE
     }
 
-    fn create_commands(
-        &self,
-        command: Command,
-        registry: &mut HashMap<
-            &'static str,
-            Box<fn(ArgMatches)>,
-        >,
-    ) -> Command {
+    fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
         registry.insert(MANAGE, Box::new(manage));
         command.subcommand(
             Command::new(MANAGE)
@@ -182,9 +177,8 @@ impl Plugin for ManagePlugin {
     }
 }
 
-fn manage(args: ArgMatches) {
-    let brain =
-        v5_core::packet::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
+fn manage(args: ArgMatches, robot: RobotConnection) {
+    let brain = robot.system_connection;
     if let Some((command, args)) = args.subcommand() {
         match command {
             STATUS => get_status(brain),
@@ -205,26 +199,24 @@ fn manage(args: ArgMatches) {
     }
 }
 
-fn get_status(mut brain: Brain) -> Result<()> {
-    let status = brain.get_system_status()?;
+fn get_status(mut brain: Box<dyn SerialConnection>) -> Result<()> {
+    let status = GetSystemStatus::new().send(&mut brain)?;
     println!(
         "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
-        status.system,
-        status.cpu0,
-        status.cpu1,
-        status.touch,
-        status.system_id
+        status.system, status.cpu0, status.cpu1, status.touch, status.system_id
     );
     Ok(())
 }
 
-fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    let metadata = brain.read_file_metadata(
+fn get_metadata(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+    let metadata = GetFileMetadataByName::new(
+        Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
+        0,
         args.get_one::<String>(FILE_NAME)
             .expect("missing file name!")
-            .as_str(),
-        Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
-    )?;
+            .as_str()
+    ).send(&mut brain)?;
+
     println!(
         "Name: {}\nVid: {}\nSize: {}\nAddress: {}\n CRC: {}\nFile Type: {}\nTimestamp: {}",
         metadata.name,
@@ -240,62 +232,63 @@ fn get_metadata(mut brain: Brain, args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn list_files(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    let amount = brain.get_directory_count(
+fn list_files(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+    let amount = GetDirectoryCount::new(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
         *args.get_one::<u8>(OPTION).unwrap_or(&0),
-    )?;
+    ).send(&mut brain)?;
+
     for i in 0..amount {
-        println!("{}\n--", brain.get_file_metadata_by_index(i as u8, 0)?);
+        println!("{}\n--", GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?);
     }
     Ok(())
 }
 
-fn stop_execution(mut brain: Brain) -> Result<()> {
-    brain.execute_program(Vid::User, 0, "")?;
+fn stop_execution(mut brain: Box<dyn SerialConnection>) -> Result<()> {
+    ExecuteProgram::new(Vid::User, 0, "").send(&mut brain)?;
     Ok(())
 }
 
-fn execute_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn execute_program(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("no slot provided");
-    brain.execute_program(vid, 0x80, format!("slot_{}.bin", slot).as_str())?;
+    ExecuteProgram::new(vid, 0x80, format!("slot_{}.bin", slot).as_str()).send(&mut brain)?;
     Ok(())
 }
 
-fn remove_all_programs(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn remove_all_programs(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
-    let c = brain.get_directory_count(vid, 0)?;
+    let c = GetDirectoryCount::new(vid, 0).send(&mut brain)?;
     let mut vec = Vec::new();
     vec.reserve(c as usize);
     for i in 0..c {
-        vec.push(brain.get_file_metadata_by_index(i as u8, 0)?.name);
+        vec.push(GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?);
     }
-    for name in vec {
-        brain.delete_file(vid, 0, &name)?;
+    for meta in vec {
+        DeleteFile::new(vid, true, &meta.name).send(&mut brain)?;
     }
     Ok(())
 }
 
-fn remove_file(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn remove_file(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let name = args
         .get_one::<String>(FILE_NAME)
         .expect("missing name")
         .clone();
-    brain.delete_file(vid, 0, &name)?;
+    DeleteFile::new(vid, false, &name).send(&mut brain)?;
     Ok(())
 }
 
-fn remove_program(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn remove_program(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("missing slot");
-    brain.delete_file(vid, 0, &format!("slot_{}.bin", slot))?;
-    brain.delete_file(vid, 0, &format!("slot_{}.ini", slot))?;
+    DeleteFile::new(vid, false, &format!("slot_{}.bin", slot)).send(&mut brain)?;
+    DeleteFile::new(vid, false, &format!("slot_{}.ini", slot)).send(&mut brain)?;
     Ok(())
 }
 
-fn kernel_variable(brain: Brain, args: &ArgMatches) -> Result<()> {
+fn kernel_variable(brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
             GET => get_kernel_variable(brain, args),
@@ -307,23 +300,22 @@ fn kernel_variable(brain: Brain, args: &ArgMatches) -> Result<()> {
     }
 }
 
-fn get_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
-    let value = brain.get_kernel_variable(variable)?;
+fn get_kernel_variable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+    let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
+    let value = GetKernelVariable::new(variable).send(&mut brain)?;
     println!("{}", value);
     Ok(())
 }
 
-fn set_kernel_variable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    let variable = KernelVariable::try_from(args.get_one::<String>(VARIABLE).unwrap().clone())?;
+fn set_kernel_variable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+    let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = args.get_one::<String>(VALUE).unwrap();
-    let actual_value = brain.set_kernel_variable(variable, value.as_str())?;
+    let actual_value = SetKernelVariable::new(variable, value.as_str()).send(&mut brain)?;
 
-    println!("{}", actual_value);
+    println!("set");
     Ok(())
 }
 
-fn capture_screen(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    //todo
+fn capture_screen(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     Ok(())
 }

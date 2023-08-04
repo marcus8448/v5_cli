@@ -1,11 +1,13 @@
-use std::collections::HashMap;
-use std::time::{Duration};
-use v5_core::clap::{value_parser, Arg, ArgMatches, Command};
+use std::time::Duration;
+
+use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
+use v5_core::connection::{RobotConnection, SerialConnection};
 use v5_core::error::Error;
 use v5_core::export_plugin;
 use v5_core::log::error;
-use v5_core::plugin::{Plugin, PORT};
-use v5_core::serial::system::{Brain, CompetitionStatus};
+use v5_core::packet::competition::{CompetitionState, ManageCompetition};
+use v5_core::packet::Packet;
+use v5_core::plugin::{CommandRegistry, Plugin};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -32,14 +34,7 @@ impl Plugin for CompetitionPlugin {
         COMPETITION
     }
 
-    fn create_commands(
-        &self,
-        command: Command,
-        registry: &mut HashMap<
-            &'static str,
-            Box<fn(ArgMatches)>,
-        >,
-    ) -> Command {
+    fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
         registry.insert(COMPETITION, Box::new(competition));
         command.subcommand(
             Command::new(COMPETITION)
@@ -70,9 +65,8 @@ impl Plugin for CompetitionPlugin {
     }
 }
 
-fn competition(args: ArgMatches) {
-    let brain =
-        v5_core::packet::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
+fn competition(args: ArgMatches, robot: RobotConnection) {
+    let brain = robot.system_connection;
     if let Some((command, args)) = args.subcommand() {
         match command {
             START => start(brain, args),
@@ -87,26 +81,26 @@ fn competition(args: ArgMatches) {
     }
 }
 
-fn autonomous(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn autonomous(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    brain.manage_competition(CompetitionStatus::Autonomous)?;
+    ManageCompetition::new(CompetitionState::Autonomous).send(&mut brain)?;
     std::thread::sleep(time);
     Ok(())
 }
 
-fn opcontrol(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn opcontrol(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    brain.manage_competition(CompetitionStatus::OpControl)?;
+    ManageCompetition::new(CompetitionState::OpControl).send(&mut brain)?;
     std::thread::sleep(time);
     Ok(())
 }
 
-fn disable(mut brain: Brain, args: &ArgMatches) -> Result<()> {
-    brain.manage_competition(CompetitionStatus::Disabled)?;
+fn disable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+    ManageCompetition::new(CompetitionState::Disabled).send(&mut brain)?;
     Ok(())
 }
 
-fn start(mut brain: Brain, args: &ArgMatches) -> Result<()> {
+fn start(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     //todo
-    return Ok(())
+    return Ok(());
 }

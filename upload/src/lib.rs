@@ -1,22 +1,26 @@
-use flate2::Compression;
-use ini::Ini;
-use std::collections::HashMap;
 use std::io;
 use std::io::Read;
 use std::path::Path;
 use std::thread::JoinHandle;
 use std::time::SystemTime;
+
 use base64::Engine;
+use flate2::Compression;
+use ini::Ini;
+
+use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueHint};
+use v5_core::connection::{RobotConnection, SerialConnection};
+use v5_core::crc::{Crc, CRC_32_BZIP2};
 use v5_core::log::info;
-use v5_core::plugin::{Plugin, PORT};
-use v5_core::serial::system::{FileType, TransferTarget, UploadAction, Vid};
-use v5_core::packet::packet::CRC32;
+use v5_core::packet::filesystem::{FileTransferComplete, FileTransferInitialize, FileTransferWrite, FileType, GetFileMetadataByName, SetFileTransferLink, TransferDirection, TransferTarget, UploadAction, Vid};
+use v5_core::packet::Packet;
+use v5_core::plugin::{CommandRegistry, Plugin};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
+pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
 
 const UPLOAD: &str = "upload";
 const COLD_PACKAGE: &str = "cold";
@@ -41,14 +45,7 @@ impl Plugin for UploadPlugin {
         UPLOAD
     }
 
-    fn create_commands(
-        &self,
-        command: Command,
-        registry: &mut HashMap<
-            &'static str,
-            Box<fn(ArgMatches)>,
-        >,
-    ) -> Command {
+    fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
         registry.insert(UPLOAD, Box::new(upload_program));
         command.subcommand(
             Command::new(UPLOAD)
@@ -119,9 +116,8 @@ impl Plugin for UploadPlugin {
     }
 }
 
-fn upload_program(args: ArgMatches) {
-    let mut brain =
-        v5_core::packet::connect_to_brain(args.get_one(PORT).map(|f: &String| f.to_string()));
+fn upload_program(args: ArgMatches, robot: RobotConnection) {
+    let mut brain = robot.system_connection;
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
     let cold_package_path = *args.get_one::<&String>(COLD_PACKAGE).unwrap();
@@ -138,8 +134,10 @@ fn upload_program(args: ArgMatches) {
     let file_ini = format!("slot_{}.ini", index);
     let action = UploadAction::try_from(action.as_str()).unwrap();
 
-    let cold_handle: JoinHandle<Result<Vec<u8>, io::Error>> = std::thread::spawn(move || load_compressed(cold_package_path)); //probably overkill
-    let hot_handle: JoinHandle<Result<Vec<u8>, io::Error>> = std::thread::spawn(move || load_compressed(hot_package_path));
+    let cold_handle: JoinHandle<Result<Vec<u8>, io::Error>> =
+        std::thread::spawn(move || load_compressed(cold_package_path)); //probably overkill
+    let hot_handle: JoinHandle<Result<Vec<u8>, io::Error>> =
+        std::thread::spawn(move || load_compressed(hot_package_path));
 
     let ini = generate_program_ini(
         "0.1.0",
@@ -153,73 +151,112 @@ fn upload_program(args: ArgMatches) {
     );
 
     let cold_package = cold_handle.join().unwrap().unwrap();
-    let cold_hash = base64::engine::general_purpose::STANDARD.encode(extendhash::md5::compute_hash(cold_package.as_slice()));
+    let cold_hash = base64::engine::general_purpose::STANDARD
+        .encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let cold_len = cold_package.len();
     let crc = CRC32.checksum(&cold_package);
-    let available_package = brain
-        .read_file_metadata(&cold_hash[..24], Vid::System)
+    let available_package = GetFileMetadataByName::new(Vid::System, 0, &cold_hash[..24]).send(&mut brain)
         .unwrap();
     if available_package.size != cold_len as u32 || available_package.crc != crc {
         info!("Cold package differs! Re-uploading...");
-        brain
-            .upload_file(
-                TransferTarget::Flash,
-                FileType::Bin,
-                Vid::Pros,
-                &cold_package,
-                &cold_hash[..24],
-                cold_address,
-                crc,
-                overwrite,
-                timestamp,
-                None,
-                UploadAction::Nothing,
-            )
-            .unwrap();
-    }
-
-    let hot_package = hot_handle.join().unwrap().unwrap();
-    let crc = CRC32.checksum(&hot_package);
-    brain
-        .upload_file(
+        upload_file(
+            &mut brain,
             TransferTarget::Flash,
             FileType::Bin,
-            Vid::User,
-            &hot_package,
-            &file_name,
-            hot_address,
-            crc,
-            overwrite,
-            timestamp,
-            Some((&cold_hash[..24], Vid::V5Cli)),
-            action,
-        )
-        .unwrap();
-
-    let conf = ini;
-    let crc = CRC32.checksum(&conf);
-    brain
-        .upload_file(
-            TransferTarget::Flash,
-            FileType::Ini,
-            Vid::User,
-            &conf,
-            &file_ini,
-            0,
+            Vid::Pros,
+            &cold_package,
+            &cold_hash[..24],
+            cold_address,
             crc,
             overwrite,
             timestamp,
             None,
             UploadAction::Nothing,
-        )
-        .unwrap();
+        ).unwrap();
+    }
+
+    let hot_package = hot_handle.join().unwrap().unwrap();
+    let crc = CRC32.checksum(&hot_package);
+    upload_file(
+        &mut brain,
+        TransferTarget::Flash,
+        FileType::Bin,
+        Vid::User,
+        &hot_package,
+        &file_name,
+        hot_address,
+        crc,
+        overwrite,
+        timestamp,
+        Some((&cold_hash[..24], Vid::V5Cli)),
+        action,
+    ).unwrap();
+
+    let conf = ini;
+    let crc = CRC32.checksum(&conf);
+    upload_file(
+        &mut brain,
+        TransferTarget::Flash,
+        FileType::Ini,
+        Vid::User,
+        &conf,
+        &file_ini,
+        0,
+        crc,
+        overwrite,
+        timestamp,
+        None,
+        UploadAction::Nothing,
+    ).unwrap();
 }
 
 fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
     let mut vec = Vec::new();
-    flate2::read::ZlibEncoder::new(std::fs::File::open(path)?, Compression::best()).read_to_end(&mut vec)?;
+    flate2::read::ZlibEncoder::new(std::fs::File::open(path)?, Compression::best())
+        .read_to_end(&mut vec)?;
     vec.shrink_to_fit();
     return Ok(vec);
+}
+
+fn upload_file(
+    mut brain: &mut Box<dyn SerialConnection>,
+    target: TransferTarget,
+    file_type: FileType,
+    vid: Vid,
+    file: &[u8],
+    remote_name: &str,
+    address: u32,
+    crc: u32,
+    overwrite: bool,
+    timestamp: SystemTime,
+    linked_file: Option<(&str, Vid)>,
+    action: UploadAction,
+) -> v5_core::error::Result<()> {
+    let meta = FileTransferInitialize::new(
+        TransferDirection::Upload,
+        target,
+        vid,
+        overwrite,
+        file.len() as u32,
+        address,
+        crc,
+        0b00_01_00,
+        file_type,
+        remote_name,
+        timestamp,
+    ).send(&mut brain)?;
+    assert!(meta.file_size >= file.len() as u32);
+    if let Some((name, vid)) = linked_file {
+        SetFileTransferLink::new(name, vid).send(&mut brain)?;
+    }
+    let max_packet_size = meta.max_packet_size / 2;
+    let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
+    for i in (0..file.len()).step_by(max_packet_size as usize) {
+        let end = file.len().min(i + max_packet_size as usize);
+        FileTransferWrite::new(&file[i..end], address + i as u32).send(&mut brain)?;
+    }
+    FileTransferComplete::new(action).send(&mut brain)?;
+    Ok(())
 }
 
 fn generate_program_ini(

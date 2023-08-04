@@ -1,15 +1,20 @@
+use std::fmt::{Display, Formatter};
 use std::io;
-use std::time::SystemTime;
 use std::mem::size_of;
+use std::time::SystemTime;
+
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+
 use crate::buffer::{ReadBuffer, WriteBuffer};
 use crate::error::{Error, Result};
-use crate::packet::system::{Channel, convert_from_vex_timestamp, convert_to_vex_timestamp};
 use crate::packet::Packet;
+use crate::packet::system::{Channel, convert_from_vex_timestamp, convert_to_vex_timestamp};
 
 pub struct UploadParameters {
-    max_packet_size: u16,
-    file_size: u32,
-    crc: u32,
+    pub max_packet_size: u16,
+    pub file_size: u32,
+    pub crc: u32,
 }
 
 pub struct FileMetadata {
@@ -21,6 +26,24 @@ pub struct FileMetadata {
     pub timestamp: SystemTime,
     pub version: u32,
     pub name: String,
+}
+
+impl Display for FileMetadata {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Name: {}\nVersion: {}\nSize: {}\nAddress: {}\nCRC: {}\nFile Type: {}\nTimestamp: {}",
+            self.name,
+            self.version,
+            self.size,
+            self.addr,
+            self.crc,
+            self.file_type,
+            OffsetDateTime::from(self.timestamp)
+                .format(&Rfc3339)
+                .unwrap()
+        )
+    }
 }
 
 #[repr(u8)]
@@ -95,16 +118,35 @@ pub enum Vid {
     Custom(u8),
 }
 
-impl Into<u8> for Vid {
-    fn into(self) -> u8 {
-        match self {
-            Self::User => 1,
-            Self::System => 15,
-            Self::Rms => 16,
-            Self::Pros => 24,
-            Self::V5Cli => 27,
-            Self::Mw => 32,
-            Self::Custom(c) => c,
+impl Display for Vid {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} ({})",
+            match self {
+                Self::User => "user",
+                Self::System => "system",
+                Self::Rms => "rms",
+                Self::Pros => "pros",
+                Self::V5Cli => "v5_cli",
+                Self::Mw => "mw",
+                Self::Custom(_) => "custom",
+            },
+            u8::from(*self)
+        )
+    }
+}
+
+impl From<Vid> for u8 {
+    fn from(value: Vid) -> Self {
+        match value {
+            Vid::User => 1,
+            Vid::System => 15,
+            Vid::Rms => 16,
+            Vid::Pros => 24,
+            Vid::V5Cli => 27,
+            Vid::Mw => 32,
+            Vid::Custom(c) => c,
         }
     }
 }
@@ -150,27 +192,26 @@ impl TryFrom<&str> for FileType {
 }
 
 pub struct FileTransferChannel {
-    channel: Channel
+    channel: Channel,
 }
 
 impl FileTransferChannel {
     pub fn new(channel: Channel) -> Self {
-        FileTransferChannel {
-            channel
-        }
+        FileTransferChannel { channel }
     }
 }
 
 impl Packet<0x10> for FileTransferChannel {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         2
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(1)?;
-        buffer.write_u8(self.channel.into())
+        buffer.write_u8(1);
+        buffer.write_u8(self.channel.into());
+        Ok(())
     }
 
     fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
@@ -178,7 +219,7 @@ impl Packet<0x10> for FileTransferChannel {
     }
 }
 
-struct FileTransferInitialize<'a> {
+pub struct FileTransferInitialize<'a> {
     direction: TransferDirection,
     target: TransferTarget,
     vid: Vid,
@@ -192,58 +233,63 @@ struct FileTransferInitialize<'a> {
     timestamp: SystemTime,
 }
 
+impl<'a> FileTransferInitialize<'a> {
+    pub fn new(direction: TransferDirection, target: TransferTarget, vid: Vid, overwrite: bool, length: u32, address: u32, crc: u32, version: u32, file_type: FileType, name: &'a str, timestamp: SystemTime) -> Self {
+        Self { direction, target, vid, overwrite, length, address, crc, version, file_type, name, timestamp }
+    }
+}
+
 impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
     type Response = UploadParameters;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         1 + 1 + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.direction.into())?;
-        buffer.write_u8(self.target.into())?;
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(self.overwrite as u8)?;
-        buffer.write_u32(self.length)?;
-        buffer.write_u32(self.address)?;
-        buffer.write_u32(self.crc)?;
-        buffer.write_str(&self.file_type.get_name(), 4)?;
-        buffer.write_u32(convert_to_vex_timestamp(self.timestamp))?;
-        buffer.write_u32(self.version)?;
-        buffer.write_str(self.name, 24)?;
+        buffer.write_u8(self.direction.into());
+        buffer.write_u8(self.target.into());
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(self.overwrite as u8);
+        buffer.write_u32(self.length);
+        buffer.write_u32(self.address);
+        buffer.write_u32(self.crc);
+        buffer.write_str(self.file_type.get_name(), 4);
+        buffer.write_u32(convert_to_vex_timestamp(self.timestamp));
+        buffer.write_u32(self.version);
+        buffer.write_str(self.name, 24);
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
         Ok(UploadParameters {
-            max_packet_size: buffer.read_u16()?,
-            file_size: buffer.read_u32()?,
-            crc: buffer.read_u32()?,
+            max_packet_size: buffer.read_u16(),
+            file_size: buffer.read_u32(),
+            crc: buffer.read_u32(),
         })
     }
 }
 
 pub struct FileTransferComplete {
-    upload_action: UploadAction
+    upload_action: UploadAction,
 }
 
 impl FileTransferComplete {
     pub fn new(upload_action: UploadAction) -> Self {
-        FileTransferComplete {
-            upload_action
-        }
+        FileTransferComplete { upload_action }
     }
 }
 
 impl Packet<0x12> for FileTransferComplete {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         1
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.upload_action.into())
+        buffer.write_u8(self.upload_action.into());
+        Ok(())
     }
 
     fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
@@ -252,30 +298,27 @@ impl Packet<0x12> for FileTransferComplete {
 }
 
 pub struct FileTransferWrite<'a> {
-    slice: &'a[u8],
-    address: u32
+    slice: &'a [u8],
+    address: u32,
 }
 
 impl<'a> FileTransferWrite<'a> {
-    pub fn new(slice: &[u8], address: u32) -> Self {
-        FileTransferWrite {
-            slice,
-            address
-        }
+    pub fn new(slice: &'a [u8], address: u32) -> Self {
+        FileTransferWrite { slice, address }
     }
 }
 
 impl<'a> Packet<0x13> for FileTransferWrite<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         1
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u32(self.address)?;
-        buffer.write(self.slice)?;
-        buffer.write_u8(0)?;
+        buffer.write_u32(self.address);
+        buffer.write_raw(self.slice);
+        buffer.write_u8(0);
         Ok(())
     }
 
@@ -286,63 +329,57 @@ impl<'a> Packet<0x13> for FileTransferWrite<'a> {
 
 pub struct FileTransferRead {
     len: u16,
-    address: u32
+    address: u32,
 }
 
 impl FileTransferRead {
     pub fn new(len: u16, address: u32) -> Self {
-        FileTransferRead {
-            len,
-            address
-        }
+        FileTransferRead { len, address }
     }
 }
 
 impl Packet<0x14> for FileTransferRead {
     type Response = Box<[u8]>;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         size_of::<u32>() + size_of::<u16>()
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u32(self.address)?;
-        buffer.write_u16(self.len)?;
+        buffer.write_u32(self.address);
+        buffer.write_u16(self.len);
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
-        let vec = vec!(0_u8; self.len as usize);
-        buffer.read(&mut vec[..])?;
+        let mut vec = vec![0_u8; self.len as usize];
+        buffer.read_raw(&mut vec[..]);
         Ok(vec.into_boxed_slice())
     }
 }
 
 pub struct SetFileTransferLink<'a> {
     name: &'a str,
-    vid: Vid
+    vid: Vid,
 }
 
 impl<'a> SetFileTransferLink<'a> {
-    pub fn new(name: &str, vid: Vid) -> Self {
-        SetFileTransferLink {
-            name,
-            vid
-        }
+    pub fn new(name: &'a str, vid: Vid) -> Self {
+        SetFileTransferLink { name, vid }
     }
 }
 
 impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         size_of::<u8>() + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(0)?;
-        buffer.write_str(self.name, 24)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(0);
+        buffer.write_str(self.name, 24);
         Ok(())
     }
 
@@ -353,7 +390,7 @@ impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
 
 pub struct GetDirectoryCount {
     vid: Vid,
-    option: u8
+    option: u8,
 }
 
 impl GetDirectoryCount {
@@ -365,24 +402,24 @@ impl GetDirectoryCount {
 impl Packet<0x16> for GetDirectoryCount {
     type Response = u16;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         size_of::<u8>() + size_of::<u8>()
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(self.option)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(self.option);
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
-        buffer.read_u16()
+        Ok(buffer.read_u16())
     }
 }
 
 pub struct GetFileMetadataByIndex {
     index: u8,
-    option: u8
+    option: u8,
 }
 
 impl GetFileMetadataByIndex {
@@ -394,42 +431,42 @@ impl GetFileMetadataByIndex {
 impl Packet<0x17> for GetFileMetadataByIndex {
     type Response = FileMetadata;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         size_of::<u8>() + size_of::<u8>()
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.index)?;
-        buffer.write_u8(self.option)?;
+        buffer.write_u8(self.index);
+        buffer.write_u8(self.option);
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
         Ok(FileMetadata {
-            vid: Vid::from(buffer.read_u8()?),
-            size: buffer.read_u32()?,
-            addr: buffer.read_u32()?,
-            crc: buffer.read_u32()?,
-            file_type: buffer.read_str(4)?,
-            timestamp: convert_from_vex_timestamp(buffer.read_u32()?),
-            version: buffer.read_u32()?,
-            name: buffer.read_str(24)?
+            vid: Vid::from(buffer.read_u8()),
+            size: buffer.read_u32(),
+            addr: buffer.read_u32(),
+            crc: buffer.read_u32(),
+            file_type: buffer.read_str(4),
+            timestamp: convert_from_vex_timestamp(buffer.read_u32()),
+            version: buffer.read_u32(),
+            name: buffer.read_str(24),
         })
     }
 }
 
-struct GetFileMetadataByName<'a> {
+pub struct GetFileMetadataByName<'a> {
     vid: Vid,
     option: u8,
-    file_name: &'a str
+    file_name: &'a str,
 }
 
 impl<'a> GetFileMetadataByName<'a> {
-    fn new(vid: Vid, option: u8, filename: &str) -> Self {
+    pub fn new(vid: Vid, option: u8, filename: &'a str) -> Self {
         GetFileMetadataByName {
             vid,
             option,
-            file_name: filename
+            file_name: filename,
         }
     }
 }
@@ -437,27 +474,27 @@ impl<'a> GetFileMetadataByName<'a> {
 impl<'a> Packet<0x19> for GetFileMetadataByName<'a> {
     type Response = FileMetadata;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         1 + 1 + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(self.option)?;
-        buffer.write_str(self.file_name, 24)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(self.option);
+        buffer.write_str(self.file_name, 24);
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
         Ok(FileMetadata {
-            vid: Vid::from(buffer.read_u8()?),
-            size: buffer.read_u32()?,
-            addr: buffer.read_u32()?,
-            crc: buffer.read_u32()?,
-            file_type: buffer.read_str(4)?,
-            timestamp: convert_from_vex_timestamp(buffer.read_u32()?),
-            version: buffer.read_u32()?,
-            name: buffer.read_str(24)?
+            vid: Vid::from(buffer.read_u8()),
+            size: buffer.read_u32(),
+            addr: buffer.read_u32(),
+            crc: buffer.read_u32(),
+            file_type: buffer.read_str(4),
+            timestamp: convert_from_vex_timestamp(buffer.read_u32()),
+            version: buffer.read_u32(),
+            name: buffer.read_str(24),
         })
     }
 }
@@ -469,30 +506,46 @@ pub struct SetProgramFileMetadata<'a> {
     file_type: &'a str,
     timestamp: u32,
     version: u32,
-    filename: &'a str
+    filename: &'a str,
 }
 
 impl<'a> SetProgramFileMetadata<'a> {
-    pub fn new(vid: Vid, options: u8, address: u32, file_type: &'a str, timestamp: u32, version: u32, filename: &'a str) -> Self {
-        Self { vid, options, address, file_type, timestamp, version, filename }
+    pub fn new(
+        vid: Vid,
+        options: u8,
+        address: u32,
+        file_type: &'a str,
+        timestamp: u32,
+        version: u32,
+        filename: &'a str,
+    ) -> Self {
+        Self {
+            vid,
+            options,
+            address,
+            file_type,
+            timestamp,
+            version,
+            filename,
+        }
     }
 }
 
 impl<'a> Packet<0x1A> for SetProgramFileMetadata<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         0
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(self.options)?;
-        buffer.write_u32(self.address)?;
-        buffer.write_str(self.file_type, 4)?;
-        buffer.write_u32(self.timestamp)?;
-        buffer.write_u32(self.version)?;
-        buffer.write_str(self.filename, 24)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(self.options);
+        buffer.write_u32(self.address);
+        buffer.write_str(self.file_type, 4);
+        buffer.write_u32(self.timestamp);
+        buffer.write_u32(self.version);
+        buffer.write_str(self.filename, 24);
 
         Ok(())
     }
@@ -506,26 +559,30 @@ impl<'a> Packet<0x1A> for SetProgramFileMetadata<'a> {
 pub struct DeleteFile<'a> {
     vid: Vid,
     erase_all: bool,
-    file_name: &'a str
+    file_name: &'a str,
 }
 
 impl<'a> DeleteFile<'a> {
     pub fn new(vid: Vid, erase_all: bool, file_name: &'a str) -> Self {
-        Self { vid, erase_all, file_name }
+        Self {
+            vid,
+            erase_all,
+            file_name,
+        }
     }
 }
 
 impl<'a> Packet<0x1A> for DeleteFile<'a> {
     type Response = ();
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         0
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(if self.erase_all { 0x80 } else { 0 })?;
-        buffer.write_str(self.file_name, 24)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(if self.erase_all { 0x80 } else { 0 });
+        buffer.write_str(self.file_name, 24);
 
         Ok(())
     }
@@ -538,31 +595,35 @@ impl<'a> Packet<0x1A> for DeleteFile<'a> {
 pub struct GetProgramFileSlot<'a> {
     vid: Vid,
     options: u8,
-    file_name: &'a str
+    file_name: &'a str,
 }
 
 impl<'a> GetProgramFileSlot<'a> {
     pub fn new(vid: Vid, options: u8, file_name: &'a str) -> Self {
-        Self { vid, options, file_name }
+        Self {
+            vid,
+            options,
+            file_name,
+        }
     }
 }
 
 impl<'a> Packet<0x1C> for GetProgramFileSlot<'a> {
     type Response = u8;
 
-    fn get_size(&self) -> usize {
+    fn send_len(&self) -> usize {
         0
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
-        buffer.write_u8(self.vid.into())?;
-        buffer.write_u8(self.options)?;
-        buffer.write_str(self.file_name, 24)?;
+        buffer.write_u8(self.vid.into());
+        buffer.write_u8(self.options);
+        buffer.write_str(self.file_name, 24);
 
         Ok(())
     }
 
     fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
-        buffer.read_u8()
+        Ok(buffer.read_u8())
     }
 }
