@@ -1,11 +1,15 @@
+use std::sync::OnceLock;
+
 use v5_core::clap::{Arg, ArgAction, Command};
 use v5_core::plugin::Plugin;
 
-const PORT: &'static str = "port";
-const BLUETOOTH: &'static str = "bluetooth";
-const MAC_ADDRESS: &'static str = "mac-address";
-const PIN: &'static str = "pin";
-const VERBOSE: &'static str = "verbose";
+const PORT: &str = "port";
+const BLUETOOTH: &str = "bluetooth";
+const MAC_ADDRESS: &str = "mac-address";
+const PIN: &str = "pin";
+const VERBOSE: &str = "verbose";
+
+pub static BASE_COMMAND: OnceLock<Command> = OnceLock::new();
 
 fn main() {
     let mut command = Command::new("robot")
@@ -56,6 +60,7 @@ fn main() {
         command = plugin.create_commands(command, &mut registry);
     }
 
+    BASE_COMMAND.set(command.clone()).unwrap();
     let root = command.get_matches_mut();
     match root.subcommand() {
         None => {
@@ -70,14 +75,14 @@ fn main() {
                     .enable_all()
                     .build()
                     .unwrap();
-                v5_core::TOKIO_RUNTIME.set(runtime.handle().clone()).unwrap();
-                v5_core::TOKIO_RUNTIME.get().unwrap()
-                    .block_on(async {
-                        let robot =
-                            v5_core::connection::bluetooth::connect_to_robot(mac_address, pin)
-                                .await;
-                        registry.get(name).unwrap()(matches.clone(), robot.expect("Robot"));
-                    });
+                v5_core::TOKIO_RUNTIME
+                    .set(runtime.handle().clone())
+                    .unwrap();
+                v5_core::TOKIO_RUNTIME.get().unwrap().block_on(async {
+                    let robot =
+                        v5_core::connection::bluetooth::connect_to_robot(mac_address, pin).await;
+                    registry.get(name).unwrap()(matches.clone(), robot.expect("Robot"));
+                });
             } else {
                 let port: Option<&String> = root.get_one(PORT);
                 registry.get(name).unwrap()(
@@ -91,6 +96,6 @@ fn main() {
 
 #[no_mangle]
 unsafe extern "C" fn register_default_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
-    plugins.push(Box::new(v5_upload::UploadPlugin::default()));
-    plugins.push(Box::new(v5_manage::ManagePlugin::default()));
+    plugins.push(Box::new(v5_upload::UploadPlugin {}));
+    plugins.push(Box::new(v5_manage::ManagePlugin {}));
 }

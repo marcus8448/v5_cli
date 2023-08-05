@@ -29,7 +29,11 @@ pub trait Packet<const ID: u8>: Debug {
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()>;
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response>;
+    fn read_response(
+        &self,
+        buffer: &mut dyn ReadBuffer,
+        len: usize,
+    ) -> std::io::Result<Self::Response>;
 
     fn send(&mut self, connection: &mut Box<dyn SerialConnection>) -> Result<Self::Response> {
         dbg!(&self);
@@ -62,7 +66,7 @@ pub trait Packet<const ID: u8>: Debug {
             buffer.write_raw(&CRC16.checksum(&buffer).to_be_bytes());
         }
 
-        println!("sending: {:02X?}", &buffer);
+        // println!("sending: {:02X?}", &buffer);
         connection.write_all(&buffer)?;
         connection.flush()?;
 
@@ -105,7 +109,11 @@ pub trait Packet<const ID: u8>: Debug {
 
         connection.read_exact(&mut payload[start..])?;
 
-        println!("received data ({}): {:02X?}", len - if Self::is_simple() { 1 } else { 4 }, &payload);
+        // println!(
+        //     "received data ({}): {:02X?}",
+        //     len - if Self::is_simple() { 1 } else { 4 },
+        //     &payload
+        // );
 
         if Self::is_simple() {
             assert_eq!(command, ID);
@@ -119,9 +127,9 @@ pub trait Packet<const ID: u8>: Debug {
                 println!("NACK: {:?} ({})", &nack, payload[start + 1]);
                 return Err(crate::error::Error::Generic("NACK"));
             }
-            Ok(self.read_response(&mut FixedReadBuffer::new(
-                &payload[start + 2..payload.len() - 2],
-            ), len - 4
+            Ok(self.read_response(
+                &mut FixedReadBuffer::new(&payload[start + 2..payload.len() - 2]),
+                len - 4,
             )?)
         }
     }

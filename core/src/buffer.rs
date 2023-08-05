@@ -78,7 +78,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<u8>();
-        return out;
+        out
     }
 
     fn read_i8(&mut self) -> i8 {
@@ -88,7 +88,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<i8>();
-        return out;
+        out
     }
 
     fn read_u16(&mut self) -> u16 {
@@ -98,7 +98,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<u16>();
-        return out;
+        out
     }
 
     fn read_i16(&mut self) -> i16 {
@@ -108,7 +108,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<i16>();
-        return out;
+        out
     }
 
     fn read_u32(&mut self) -> u32 {
@@ -118,7 +118,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<u32>();
-        return out;
+        out
     }
 
     fn read_i32(&mut self) -> i32 {
@@ -128,7 +128,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<i32>();
-        return out;
+        out
     }
 
     fn read_u64(&mut self) -> u64 {
@@ -138,7 +138,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<u64>();
-        return out;
+        out
     }
 
     fn read_i64(&mut self) -> i64 {
@@ -148,7 +148,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<i64>();
-        return out;
+        out
     }
 
     fn read_u128(&mut self) -> u128 {
@@ -158,7 +158,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<u128>();
-        return out;
+        out
     }
 
     fn read_i128(&mut self) -> i128 {
@@ -168,7 +168,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<i128>();
-        return out;
+        out
     }
 
     fn read_f32(&mut self) -> f32 {
@@ -178,7 +178,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<f32>();
-        return out;
+        out
     }
 
     fn read_f64(&mut self) -> f64 {
@@ -188,7 +188,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
                 .unwrap(),
         );
         self.pos += size_of::<f64>();
-        return out;
+        out
     }
 
     fn read_raw(&mut self, slice: &mut [u8]) {

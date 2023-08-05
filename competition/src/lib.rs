@@ -19,15 +19,9 @@ const AUTONOMOUS: &str = "autonomous";
 const OPCONTROL: &str = "opcontrol";
 const LENGTH: &str = "length";
 
-export_plugin!(Box::new(CompetitionPlugin::default()));
+export_plugin!(Box::new(CompetitionPlugin {}));
 
 pub struct CompetitionPlugin {}
-
-impl Default for CompetitionPlugin {
-    fn default() -> Self {
-        CompetitionPlugin {}
-    }
-}
 
 impl Plugin for CompetitionPlugin {
     fn get_name(&self) -> &'static str {
@@ -95,12 +89,12 @@ fn opcontrol(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<
     Ok(())
 }
 
-fn disable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+fn disable(mut brain: Box<dyn SerialConnection>, _args: &ArgMatches) -> Result<()> {
     ManageCompetition::new(CompetitionState::Disabled).send(&mut brain)?;
     Ok(())
 }
 
-fn start(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+fn start(_brain: Box<dyn SerialConnection>, _args: &ArgMatches) -> Result<()> {
     //todo
-    return Ok(());
+    Ok(())
 }

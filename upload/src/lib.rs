@@ -5,22 +5,35 @@ use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 use base64::Engine;
-use flate2::Compression;
 use ini::Ini;
+use libdeflater::{CompressionLvl, Compressor};
 
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::connection::{RobotConnection, SerialConnection};
 use v5_core::crc::{Algorithm, Crc};
 use v5_core::log::info;
-use v5_core::packet::filesystem::{FileTransferComplete, FileTransferInitialize, FileTransferWrite, FileType, GetFileMetadataByName, SetFileTransferLink, TransferDirection, TransferTarget, UploadAction, Vid};
+use v5_core::packet::filesystem::{
+    FileTransferComplete, FileTransferInitialize, FileTransferWrite, FileType,
+    GetFileMetadataByName, SetFileTransferLink, TransferDirection, TransferTarget, UploadAction,
+    Vid,
+};
 use v5_core::packet::Packet;
 use v5_core::plugin::{CommandRegistry, Plugin};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
-pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm { width: 32, poly: 0x04C11DB7, init: 0, refin: false, refout: false, xorout: 0, check: 0x89A1897F, residue: 0 });
+pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm {
+    width: 32,
+    poly: 0x04C11DB7,
+    init: 0,
+    refin: false,
+    refout: false,
+    xorout: 0,
+    check: 0x89A1897F,
+    residue: 0,
+});
 
 const UPLOAD: &str = "upload";
 const COLD_PACKAGE: &str = "cold";
@@ -33,12 +46,6 @@ const INDEX: &str = "index";
 const ACTION: &str = "action";
 
 pub struct UploadPlugin {}
-
-impl UploadPlugin {
-    pub fn default() -> Self {
-        UploadPlugin {}
-    }
-}
 
 impl Plugin for UploadPlugin {
     fn get_name(&self) -> &'static str {
@@ -122,10 +129,22 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
     let cold_package_path = args.get_one::<String>(COLD_PACKAGE).unwrap().clone();
     let hot_package_path = args.get_one::<String>(HOT_PACKAGE).unwrap().clone();
-    let cold_address =
-        u32::from_str_radix(args.get_one::<String>(COLD_ADDRESS).unwrap().replace("0x", "").as_str(), 16).unwrap();
-    let hot_address =
-        u32::from_str_radix(args.get_one::<String>(HOT_ADDRESS).unwrap().replace("0x", "").as_str(), 16).unwrap();
+    let cold_address = u32::from_str_radix(
+        args.get_one::<String>(COLD_ADDRESS)
+            .unwrap()
+            .replace("0x", "")
+            .as_str(),
+        16,
+    )
+    .unwrap();
+    let hot_address = u32::from_str_radix(
+        args.get_one::<String>(HOT_ADDRESS)
+            .unwrap()
+            .replace("0x", "")
+            .as_str(),
+        16,
+    )
+    .unwrap();
     let action = args.get_one::<String>(ACTION).unwrap();
     let overwrite = true;
     let index = *args.get_one::<u8>(INDEX).unwrap() - 1;
@@ -160,7 +179,8 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
 
     let mut skip_cold = false;
 
-    let available_package = GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name).send(&mut brain);
+    let available_package =
+        GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name).send(&mut brain);
 
     if let Ok(package) = &available_package {
         if package.size == cold_len as u32 && package.crc == crc {
@@ -185,7 +205,8 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
             timestamp,
             None,
             UploadAction::Nothing,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     let hot_package = hot_handle.join().unwrap().unwrap();
@@ -203,7 +224,8 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         timestamp,
         Some((cold_package_name, Vid::Pros)),
         UploadAction::Nothing,
-    ).unwrap();
+    )
+    .unwrap();
 
     let conf = ini;
     let crc = CRC32.checksum(&conf);
@@ -220,19 +242,28 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         timestamp,
         None,
         action,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
-    let mut vec = Vec::new();
-    flate2::read::GzEncoder::new(std::fs::File::open(path)?, Compression::best())
-        .read_to_end(&mut vec)?;
-    vec.shrink_to_fit();
-    return Ok(vec);
+    let mut file = std::fs::File::open(path)?;
+    let len = usize::try_from(file.metadata().unwrap().len()).expect("file too large");
+    let mut compressor = Compressor::new(CompressionLvl::best());
+    let max_len = compressor.gzip_compress_bound(len);
+    let mut compressed_data = Vec::with_capacity(max_len);
+    compressed_data.resize(max_len, 0);
+    let mut input = Vec::with_capacity(len);
+    file.read_to_end(&mut input).expect("failed to read input");
+    let size = compressor
+        .gzip_compress(&input, &mut compressed_data)
+        .unwrap();
+    compressed_data.resize(size, 0);
+    Ok(compressed_data)
 }
 
 fn upload_file(
-    mut brain: &mut Box<dyn SerialConnection>,
+    brain: &mut Box<dyn SerialConnection>,
     target: TransferTarget,
     file_type: FileType,
     vid: Vid,
@@ -257,18 +288,19 @@ fn upload_file(
         file_type,
         remote_name,
         timestamp,
-    ).send(&mut brain)?;
+    )
+    .send(brain)?;
     assert!(meta.file_size >= file.len() as u32);
     if let Some((name, vid)) = linked_file {
-        SetFileTransferLink::new(name, vid).send(&mut brain)?;
+        SetFileTransferLink::new(name, vid).send(brain)?;
     }
     let max_packet_size = meta.max_packet_size / 2;
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);
-        FileTransferWrite::new(&file[i..end], address + i as u32).send(&mut brain)?;
+        FileTransferWrite::new(&file[i..end], address + i as u32).send(brain)?;
     }
-    FileTransferComplete::new(action).send(&mut brain)?;
+    FileTransferComplete::new(action).send(brain)?;
     Ok(())
 }
 
@@ -276,7 +308,7 @@ fn generate_program_ini(
     project_version: &str,
     ide: &str,
     name: &str,
-    program_version: &str,
+    _program_version: &str,
     slot: u8,
     icon: &str,
     description: &str,
@@ -294,7 +326,10 @@ fn generate_program_ini(
         .set("description", description)
         .set(
             "date",
-            OffsetDateTime::from(timestamp).format(&Rfc3339).unwrap().trim_end_matches('Z'),
+            OffsetDateTime::from(timestamp)
+                .format(&Rfc3339)
+                .unwrap()
+                .trim_end_matches('Z'),
         );
     let mut conf = Vec::<u8>::new();
     conf.reserve(128);

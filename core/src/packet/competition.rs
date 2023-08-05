@@ -25,9 +25,9 @@ impl TryFrom<u8> for CompetitionState {
     }
 }
 
-impl Into<u8> for CompetitionState {
-    fn into(self) -> u8 {
-        self as u8
+impl From<CompetitionState> for u8 {
+    fn from(val: CompetitionState) -> Self {
+        val as u8
     }
 }
 
@@ -58,7 +58,11 @@ impl Packet<0x2E> for ManageCompetition {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
+    fn read_response(
+        &self,
+        _buffer: &mut dyn ReadBuffer,
+        _len: usize,
+    ) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }

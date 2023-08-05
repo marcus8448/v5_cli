@@ -1,7 +1,5 @@
 use std::io::{Read, Write};
 
-use tokio::io::{AsyncRead, AsyncWrite};
-
 pub mod bluetooth;
 pub mod serial;
 

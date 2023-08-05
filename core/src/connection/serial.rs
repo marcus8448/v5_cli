@@ -5,35 +5,6 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType};
 
 use crate::connection::{RobotConnection, SerialConnection};
 
-pub enum PortType {
-    User,
-    System,
-    Controller,
-}
-
-impl PortType {
-    #[cfg(all(target_os = "linux"))]
-    pub fn is_product(&self, _name: &str) -> bool {
-        static HORRIBLE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-        let horrible = HORRIBLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        return match self {
-            PortType::User | PortType::Controller => {
-                return horrible == 1;
-            }
-            PortType::System => true,
-        };
-    }
-
-    #[cfg(all(not(target_os = "linux")))]
-    pub fn match_name(&self, name: &str) -> bool {
-        match self {
-            PortType::User => name.contains("User"),
-            PortType::System => name.contains("System") || name.contains("Communications"),
-            PortType::Controller => name.contains("Controller"),
-        }
-    }
-}
-
 struct SerialPortConnection {
     serial_port: Box<dyn SerialPort>,
 }
@@ -90,15 +61,13 @@ pub fn find_ports() -> Option<(String, String)> {
         return None;
     }
 
-    return Some((system[0].clone(), user[0].clone()));
+    Some((system[0].clone(), user[0].clone()))
 }
 
 pub fn print_out_ports() {
     for p in serialport::available_ports().expect("Failed to obtain list of ports!") {
         if let SerialPortType::UsbPort(info) = p.port_type {
-            if info.pid == 0x0501
-                && info.vid == 0x2888
-            {
+            if info.pid == 0x0501 && info.vid == 0x2888 {
                 println!(
                     "{}: {} {} ({} by {})",
                     p.port_name,
@@ -109,16 +78,12 @@ pub fn print_out_ports() {
                 );
             }
         } else {
-            println!(
-                "{}: {:?}",
-                p.port_name,
-                p.port_type
-            );
+            println!("{}: {:?}", p.port_name, p.port_type);
         }
     }
 }
 
-pub fn connect_to_robot(port: Option<&String>) -> RobotConnection {
+pub fn connect_to_robot(_port: Option<&String>) -> RobotConnection {
     let (system_port, user_port) = find_ports().expect("Unable to find v5 port!");
     let mut system = serialport::new(system_port, 115200)
         .parity(Parity::None)
@@ -138,10 +103,10 @@ pub fn connect_to_robot(port: Option<&String>) -> RobotConnection {
     system.write_data_terminal_ready(true).unwrap();
     user.write_data_terminal_ready(true).unwrap();
 
-    return RobotConnection {
+    RobotConnection {
         system_connection: Box::new(SerialPortConnection {
             serial_port: system,
         }),
         user_connection: Box::new(SerialPortConnection { serial_port: user }),
-    };
+    }
 }

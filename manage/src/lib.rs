@@ -3,9 +3,13 @@ use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::connection::{RobotConnection, SerialConnection};
 use v5_core::error::Error;
 use v5_core::log::error;
-use v5_core::packet::filesystem::{DeleteFile, GetDirectoryCount, GetFileMetadataByIndex, GetFileMetadataByName, Vid};
+use v5_core::packet::filesystem::{
+    DeleteFile, GetDirectoryCount, GetFileMetadataByIndex, GetFileMetadataByName, Vid,
+};
 use v5_core::packet::Packet;
-use v5_core::packet::system::{ExecuteProgram, GetKernelVariable, GetSystemStatus, KernelVariable, SetKernelVariable};
+use v5_core::packet::system::{
+    ExecuteProgram, GetKernelVariable, GetSystemStatus, KernelVariable, SetKernelVariable,
+};
 use v5_core::plugin::{CommandRegistry, Plugin};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
@@ -36,12 +40,6 @@ const VALUE: &str = "value";
 const CAPTURE: &str = "capture";
 
 pub struct ManagePlugin {}
-
-impl ManagePlugin {
-    pub fn default() -> Self {
-        ManagePlugin {}
-    }
-}
 
 impl Plugin for ManagePlugin {
     fn get_name(&self) -> &'static str {
@@ -220,8 +218,9 @@ fn get_metadata(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Resu
         0,
         args.get_one::<String>(FILE_NAME)
             .expect("missing file name!")
-            .as_str()
-    ).send(&mut brain)?;
+            .as_str(),
+    )
+    .send(&mut brain)?;
 
     println!(
         "Name: {}\nVid: {}\nSize: {}\nAddress: {}\n CRC: {}\nFile Type: {}\nTimestamp: {}",
@@ -242,10 +241,14 @@ fn list_files(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result
     let amount = GetDirectoryCount::new(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
         *args.get_one::<u8>(OPTION).unwrap_or(&0),
-    ).send(&mut brain)?;
+    )
+    .send(&mut brain)?;
 
     for i in 0..amount {
-        println!("{}\n--", GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?);
+        println!(
+            "{}\n--",
+            GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?
+        );
     }
     Ok(())
 }
@@ -270,8 +273,7 @@ fn remove_all_programs(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) 
     for i in 0..c {
         vec.push(GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?);
     }
-    // C9 36 B8 47 56 17 02 00 00 DB 75
-    // C9 36 B8 47 56 17 02 00 00 DB 75
+
     for meta in vec {
         DeleteFile::new(vid, true, &meta.name).send(&mut brain)?;
     }
@@ -318,12 +320,12 @@ fn get_kernel_variable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) 
 fn set_kernel_variable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = args.get_one::<String>(VALUE).unwrap();
-    let actual_value = SetKernelVariable::new(variable, value.as_str()).send(&mut brain)?;
+    SetKernelVariable::new(variable, value.as_str()).send(&mut brain)?;
 
     println!("set");
     Ok(())
 }
 
-fn capture_screen(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+fn capture_screen(_brain: Box<dyn SerialConnection>, _args: &ArgMatches) -> Result<()> {
     Ok(())
 }

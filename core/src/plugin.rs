@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use clap::{ArgMatches, Command};
 use libloading::Library;
+use log::error;
 
 use crate::connection::RobotConnection;
 
@@ -51,21 +52,21 @@ pub fn load_plugins() -> Vec<Box<dyn Plugin>> {
         }
     }
 
-    // for entry in std::fs::read_dir(path).unwrap() {
-    //     if let Ok(entry) = entry {
-    //         unsafe {
-    //             let library = Library::new(entry.path()).expect("Failed to load plugin!");
-    //
-    //             plugins.push((library
-    //                 .get::<unsafe extern "C" fn() -> Box<dyn Plugin>>(b"register_plugin\0")
-    //                 .expect("Failed to find exported plugin!"))(
-    //             ));
-    //
-    //             EXTERNAL_LIBRARIES.push(library);
-    //         }
-    //     } else {
-    //         error!("Failed to read plugin: {}", entry.unwrap_err());
-    //     }
-    // }
+    for entry in std::fs::read_dir(path).unwrap() {
+        if let Ok(entry) = entry {
+            unsafe {
+                let library = Library::new(entry.path()).expect("Failed to load plugin!");
+
+                plugins.push((library
+                    .get::<unsafe extern "C" fn() -> Box<dyn Plugin>>(b"register_plugin\0")
+                    .expect("Failed to find exported plugin!"))(
+                ));
+
+                EXTERNAL_LIBRARIES.push(library);
+            }
+        } else {
+            error!("Failed to read plugin: {}", entry.unwrap_err());
+        }
+    }
     plugins
 }
