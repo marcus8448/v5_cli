@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::io::Write;
 use std::mem::size_of;
 
 use crc::{Crc, CRC_16_XMODEM};
@@ -16,7 +18,7 @@ const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 const EXT_PACKET_ID: u8 = 0x56;
 
-pub trait Packet<const ID: u8> {
+pub trait Packet<const ID: u8>: Debug {
     type Response;
 
     fn send_len(&self) -> usize;
@@ -27,9 +29,10 @@ pub trait Packet<const ID: u8> {
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()>;
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response>;
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response>;
 
     fn send(&mut self, connection: &mut Box<dyn SerialConnection>) -> Result<Self::Response> {
+        dbg!(&self);
         let len = self.send_len();
         let mut buffer =
             Vec::with_capacity(4 + 1 + 1 + if len < 0x80 { 1 } else { 2 } + len + size_of::<u16>());
@@ -42,42 +45,42 @@ pub trait Packet<const ID: u8> {
             buffer.write_u8(ID);
 
             if len < 0x80 {
+                println!("normal size {}", len);
                 buffer.write_u8(len as u8);
             } else {
+                println!("pack size {}", len);
                 buffer.write_u8((len >> 8 | 0x80) as u8);
                 buffer.write_u8((len & 0xff) as u8);
             }
 
-            self.write_buffer(&mut buffer)?;
+            let i = buffer.len();
 
-            buffer.write_u16(CRC16.checksum(&buffer));
+            self.write_buffer(&mut buffer)?;
+            let j = buffer.len();
+            println!("Act size: {}", j - i);
+
+            buffer.write_raw(&CRC16.checksum(&buffer).to_be_bytes());
         }
 
-        println!("sent: {:?}", buffer);
+        println!("sending: {:02X?}", &buffer);
         connection.write_all(&buffer)?;
         connection.flush()?;
 
         let mut buf = [0_u8; 1];
 
         loop {
-            println!("awaiting response");
-
+            println!("Searching for header");
             connection.read_exact(&mut buf)?;
 
-            println!("a{}", buf[0]);
             if buf[0] != RESPONSE_HEADER[0] {
                 continue;
             }
-
             connection.read_exact(&mut buf)?;
-            println!("b{}", buf[0]);
             if buf[0] != RESPONSE_HEADER[1] {
                 continue;
             }
             break;
         }
-
-        println!("received header");
 
         let mut payload = Vec::with_capacity(64);
         payload.extend_from_slice(&RESPONSE_HEADER);
@@ -102,29 +105,30 @@ pub trait Packet<const ID: u8> {
 
         connection.read_exact(&mut payload[start..])?;
 
-        println!("received data: {:?}", &payload);
+        println!("received data ({}): {:02X?}", len - if Self::is_simple() { 1 } else { 4 }, &payload);
 
         if Self::is_simple() {
             assert_eq!(command, ID);
-            Ok(self.read_response(&mut FixedReadBuffer::new(&payload[start + 1..]))?)
+            Ok(self.read_response(&mut FixedReadBuffer::new(&payload[start + 1..]), len - 1)?)
         } else {
             assert_eq!(command, EXT_PACKET_ID);
             assert_eq!(ID, payload[start]);
             assert_eq!(CRC16.checksum(&payload), 0);
 
             if let Some(nack) = Nack::maybe_find(payload[start + 1]) {
-                println!("NACK: {}", nack as u8);
+                println!("NACK: {:?} ({})", &nack, payload[start + 1]);
                 return Err(crate::error::Error::Generic("NACK"));
             }
             Ok(self.read_response(&mut FixedReadBuffer::new(
                 &payload[start + 2..payload.len() - 2],
-            ))?)
+            ), len - 4
+            )?)
         }
     }
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum Nack {
     General = 0xFF,
     InvalidCrc = 0xCE,

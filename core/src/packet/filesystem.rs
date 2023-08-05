@@ -47,7 +47,7 @@ impl Display for FileMetadata {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum UploadAction {
     Nothing = 0b0,
     Run = 0b01,
@@ -80,7 +80,7 @@ impl TryFrom<&str> for UploadAction {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum TransferDirection {
     Upload = 1,
     Download = 2,
@@ -93,7 +93,7 @@ impl Into<u8> for TransferDirection {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum TransferTarget {
     DDR = 0,
     Flash = 1,
@@ -107,13 +107,12 @@ impl Into<u8> for TransferTarget {
 }
 
 #[repr(u16)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Vid {
     User = 1,
     System = 15,
     Rms = 16,
     Pros = 24,
-    V5Cli = 27,
     Mw = 32,
     Custom(u8),
 }
@@ -128,7 +127,6 @@ impl Display for Vid {
                 Self::System => "system",
                 Self::Rms => "rms",
                 Self::Pros => "pros",
-                Self::V5Cli => "v5_cli",
                 Self::Mw => "mw",
                 Self::Custom(_) => "custom",
             },
@@ -144,7 +142,6 @@ impl From<Vid> for u8 {
             Vid::System => 15,
             Vid::Rms => 16,
             Vid::Pros => 24,
-            Vid::V5Cli => 27,
             Vid::Mw => 32,
             Vid::Custom(c) => c,
         }
@@ -158,13 +155,13 @@ impl From<u8> for Vid {
             15 => Self::System,
             16 => Self::Rms,
             24 => Self::Pros,
-            27 => Self::V5Cli,
             32 => Self::Mw,
             i => Self::Custom(i),
         }
     }
 }
 
+#[derive(Debug)]
 pub enum FileType {
     Bin,
     Ini,
@@ -191,6 +188,7 @@ impl TryFrom<&str> for FileType {
     }
 }
 
+#[derive(Debug)]
 pub struct FileTransferChannel {
     channel: Channel,
 }
@@ -214,11 +212,12 @@ impl Packet<0x10> for FileTransferChannel {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct FileTransferInitialize<'a> {
     direction: TransferDirection,
     target: TransferTarget,
@@ -243,7 +242,7 @@ impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
     type Response = UploadParameters;
 
     fn send_len(&self) -> usize {
-        1 + 1 + 24
+        size_of::<u8>() * 4 + size_of::<u32>() * 3 + 4 + size_of::<u32>() * 2 + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
@@ -261,7 +260,7 @@ impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(UploadParameters {
             max_packet_size: buffer.read_u16(),
             file_size: buffer.read_u32(),
@@ -270,6 +269,7 @@ impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct FileTransferComplete {
     upload_action: UploadAction,
 }
@@ -292,11 +292,12 @@ impl Packet<0x12> for FileTransferComplete {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct FileTransferWrite<'a> {
     slice: &'a [u8],
     address: u32,
@@ -312,21 +313,24 @@ impl<'a> Packet<0x13> for FileTransferWrite<'a> {
     type Response = ();
 
     fn send_len(&self) -> usize {
-        1
+        size_of::<u32>() + self.slice.len() + if self.slice.len() % 4 != 0 { 4 - (self.slice.len() % 4) } else { 0 }
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
         buffer.write_u32(self.address);
         buffer.write_raw(self.slice);
-        buffer.write_u8(0);
+        if self.slice.len() % 4 != 0 {
+            buffer.pad(4 - self.slice.len() % 4);
+        }
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct FileTransferRead {
     len: u16,
     address: u32,
@@ -351,13 +355,14 @@ impl Packet<0x14> for FileTransferRead {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         let mut vec = vec![0_u8; self.len as usize];
         buffer.read_raw(&mut vec[..]);
         Ok(vec.into_boxed_slice())
     }
 }
 
+#[derive(Debug)]
 pub struct SetFileTransferLink<'a> {
     name: &'a str,
     vid: Vid,
@@ -373,7 +378,7 @@ impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
     type Response = ();
 
     fn send_len(&self) -> usize {
-        size_of::<u8>() + 24
+        1 + 1 + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
@@ -383,11 +388,12 @@ impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct GetDirectoryCount {
     vid: Vid,
     option: u8,
@@ -412,11 +418,12 @@ impl Packet<0x16> for GetDirectoryCount {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(buffer.read_u16())
     }
 }
 
+#[derive(Debug)]
 pub struct GetFileMetadataByIndex {
     index: u8,
     option: u8,
@@ -441,7 +448,7 @@ impl Packet<0x17> for GetFileMetadataByIndex {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(FileMetadata {
             vid: Vid::from(buffer.read_u8()),
             size: buffer.read_u32(),
@@ -455,6 +462,7 @@ impl Packet<0x17> for GetFileMetadataByIndex {
     }
 }
 
+#[derive(Debug)]
 pub struct GetFileMetadataByName<'a> {
     vid: Vid,
     option: u8,
@@ -485,7 +493,7 @@ impl<'a> Packet<0x19> for GetFileMetadataByName<'a> {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(FileMetadata {
             vid: Vid::from(buffer.read_u8()),
             size: buffer.read_u32(),
@@ -499,6 +507,7 @@ impl<'a> Packet<0x19> for GetFileMetadataByName<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct SetProgramFileMetadata<'a> {
     vid: Vid,
     options: u8,
@@ -550,12 +559,13 @@ impl<'a> Packet<0x1A> for SetProgramFileMetadata<'a> {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
 // send FT complete
+#[derive(Debug)]
 pub struct DeleteFile<'a> {
     vid: Vid,
     erase_all: bool,
@@ -572,11 +582,11 @@ impl<'a> DeleteFile<'a> {
     }
 }
 
-impl<'a> Packet<0x1A> for DeleteFile<'a> {
+impl<'a> Packet<0x1B> for DeleteFile<'a> {
     type Response = ();
 
     fn send_len(&self) -> usize {
-        0
+        1 + 1 + 24
     }
 
     fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
@@ -587,11 +597,12 @@ impl<'a> Packet<0x1A> for DeleteFile<'a> {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct GetProgramFileSlot<'a> {
     vid: Vid,
     options: u8,
@@ -623,7 +634,7 @@ impl<'a> Packet<0x1C> for GetProgramFileSlot<'a> {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(buffer.read_u8())
     }
 }

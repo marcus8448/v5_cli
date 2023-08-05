@@ -13,11 +13,11 @@ type Result<T> = std::result::Result<T, Error>;
 
 const COMPETITION: &str = "competition";
 
-const START: &str = "status";
-const DISABLE: &str = "metadata";
-const AUTONOMOUS: &str = "ls_files";
-const OPCONTROL: &str = "file_name";
-const LENGTH: &str = "vid";
+const START: &str = "start";
+const DISABLE: &str = "disable";
+const AUTONOMOUS: &str = "autonomous";
+const OPCONTROL: &str = "opcontrol";
+const LENGTH: &str = "length";
 
 export_plugin!(Box::new(CompetitionPlugin::default()));
 

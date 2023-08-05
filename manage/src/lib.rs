@@ -84,6 +84,12 @@ impl Plugin for ManagePlugin {
                                 .short('v')
                                 .default_value("1")
                                 .value_parser(value_parser!(u8)),
+                        )
+                        .arg(
+                            Arg::new(OPTION)
+                                .short('o')
+                                .default_value("0")
+                                .value_parser(value_parser!(u8)),
                         ),
                 )
                 .subcommand(Command::new(STOP).about("Terminates a running program"))
@@ -245,14 +251,14 @@ fn list_files(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result
 }
 
 fn stop_execution(mut brain: Box<dyn SerialConnection>) -> Result<()> {
-    ExecuteProgram::new(Vid::User, 0, "").send(&mut brain)?;
+    ExecuteProgram::new(Vid::User, 0x80, "").send(&mut brain)?;
     Ok(())
 }
 
 fn execute_program(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("no slot provided");
-    ExecuteProgram::new(vid, 0x80, format!("slot_{}.bin", slot).as_str()).send(&mut brain)?;
+    ExecuteProgram::new(vid, 0x00, format!("slot_{}.bin", slot).as_str()).send(&mut brain)?;
     Ok(())
 }
 
@@ -264,6 +270,8 @@ fn remove_all_programs(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) 
     for i in 0..c {
         vec.push(GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?);
     }
+    // C9 36 B8 47 56 17 02 00 00 DB 75
+    // C9 36 B8 47 56 17 02 00 00 DB 75
     for meta in vec {
         DeleteFile::new(vid, true, &meta.name).send(&mut brain)?;
     }

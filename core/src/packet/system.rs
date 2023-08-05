@@ -11,18 +11,18 @@ use crate::packet::Packet;
 const JAN_01_2000: Duration = Duration::from_secs(946684800);
 
 pub fn convert_to_vex_timestamp(timestamp: SystemTime) -> u32 {
-    u32::try_from((timestamp.duration_since(UNIX_EPOCH).unwrap() - JAN_01_2000).as_millis())
+    u32::try_from((timestamp.duration_since(UNIX_EPOCH).unwrap() - JAN_01_2000).as_secs())
         .unwrap()
 }
 
 pub fn convert_from_vex_timestamp(timestamp: u32) -> SystemTime {
     UNIX_EPOCH
         .add(JAN_01_2000)
-        .add(Duration::from_millis(timestamp as u64))
+        .add(Duration::from_secs(timestamp as u64))
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum KernelVariable {
     TeamNumber,
     RobotName,
@@ -98,7 +98,7 @@ impl SystemStatus {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Channel {
     Pit = 0,
     Download = 1,
@@ -122,6 +122,7 @@ impl Into<u8> for Channel {
     }
 }
 
+#[derive(Debug)]
 pub struct GetSystemVersion {}
 
 impl GetSystemVersion {
@@ -145,7 +146,7 @@ impl Packet<0xA4> for GetSystemVersion {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(SystemVersion {
             major: buffer.read_u8(),
             minor: buffer.read_u8(),
@@ -166,9 +167,10 @@ pub struct SystemVersion {
     product: Product,
 }
 
+#[derive(Debug)]
 pub struct ExecuteProgram<'a> {
     vid: Vid,
-    options: u8,
+    options: u8, // 0x0 for start, 0x80 for stop?
     filename: &'a str,
 }
 
@@ -196,11 +198,12 @@ impl<'a> Packet<0x18> for ExecuteProgram<'a> {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct GetProduct {}
 
 impl GetProduct {
@@ -224,7 +227,7 @@ impl Packet<0x21> for GetProduct {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(Box::from(buffer.get_all()))
     }
 }
@@ -246,6 +249,7 @@ impl Display for Version {
     }
 }
 
+#[derive(Debug)]
 pub struct GetSystemStatus {}
 
 impl GetSystemStatus {
@@ -265,7 +269,7 @@ impl Packet<0x22> for GetSystemStatus {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         buffer.skip(1);
         let system = Version {
             major: buffer.read_u8(),
@@ -298,6 +302,7 @@ impl Packet<0x22> for GetSystemStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct SendUserCommunications<'a> {
     channel: Channel,
     payload: &'a [u8],
@@ -326,11 +331,12 @@ impl<'a> Packet<0x27> for SendUserCommunications<'a> {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }
 
+#[derive(Debug)]
 pub struct ReadUserCommunications {
     channel: Channel,
     len: u8,
@@ -356,13 +362,14 @@ impl Packet<0x27> for ReadUserCommunications {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(Box::from(buffer.get_all()))
     }
 }
 
 // CopyScreenData = 0x28
 
+#[derive(Debug)]
 pub struct GetKernelVariable {
     variable: KernelVariable,
 }
@@ -387,11 +394,12 @@ impl Packet<0x2E> for GetKernelVariable {
         Ok(())
     }
 
-    fn read_response(&self, buffer: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
-        Ok(buffer.read_str(128)) // len unknown
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
+        Ok(buffer.read_str(len))
     }
 }
 
+#[derive(Debug)]
 pub struct SetKernelVariable<'a> {
     variable: KernelVariable,
     payload: &'a str,
@@ -405,7 +413,7 @@ impl<'a> SetKernelVariable<'a> {
     }
 }
 
-impl<'a> Packet<0xC1> for SetKernelVariable<'a> {
+impl<'a> Packet<0x2F> for SetKernelVariable<'a> {
     type Response = ();
 
     fn send_len(&self) -> usize {
@@ -420,7 +428,7 @@ impl<'a> Packet<0xC1> for SetKernelVariable<'a> {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> std::io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }

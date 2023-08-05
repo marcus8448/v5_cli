@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use crate::packet::Packet;
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum CompetitionState {
     Disabled = 11,
     Autonomous = 10,
@@ -31,6 +31,7 @@ impl Into<u8> for CompetitionState {
     }
 }
 
+#[derive(Debug)]
 pub struct ManageCompetition {
     state: CompetitionState,
 }
@@ -57,7 +58,7 @@ impl Packet<0x2E> for ManageCompetition {
         Ok(())
     }
 
-    fn read_response(&self, _: &mut dyn ReadBuffer) -> io::Result<Self::Response> {
+    fn read_response(&self, buffer: &mut dyn ReadBuffer, len: usize) -> std::io::Result<Self::Response> {
         Ok(())
     }
 }

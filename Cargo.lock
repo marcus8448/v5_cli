@@ -1341,6 +1341,7 @@ dependencies = [
  "serde",
  "serialport",
  "time",
+ "tokio",
  "uuid",
 ]
 

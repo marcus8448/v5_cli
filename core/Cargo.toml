@@ -8,10 +8,11 @@ edition = "2021"
 btleplug = "0.11"
 clap = "4"
 crc = "3"
-futures = "0.3"
 libloading = "0.8"
 log = "0.4"
+futures = "0.3"
 serde = "1"
 serialport = "4"
 time = { version = "0.3", features = [ "formatting" ] }
+tokio = { version = "1.29", features = ["rt"] }
 uuid = "1.4"

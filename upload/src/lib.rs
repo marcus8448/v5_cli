@@ -11,7 +11,7 @@ use ini::Ini;
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::clap::builder::NonEmptyStringValueParser;
 use v5_core::connection::{RobotConnection, SerialConnection};
-use v5_core::crc::{Crc, CRC_32_BZIP2};
+use v5_core::crc::{Algorithm, Crc};
 use v5_core::log::info;
 use v5_core::packet::filesystem::{FileTransferComplete, FileTransferInitialize, FileTransferWrite, FileType, GetFileMetadataByName, SetFileTransferLink, TransferDirection, TransferTarget, UploadAction, Vid};
 use v5_core::packet::Packet;
@@ -20,7 +20,7 @@ use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
-pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
+pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm { width: 32, poly: 0x04C11DB7, init: 0, refin: false, refout: false, xorout: 0, check: 0x89A1897F, residue: 0 });
 
 const UPLOAD: &str = "upload";
 const COLD_PACKAGE: &str = "cold";
@@ -61,7 +61,7 @@ impl Plugin for UploadPlugin {
                 )
                 .arg(
                     Arg::new(HOT_PACKAGE)
-                        // .short('h')
+                        .short('t')
                         .help("Location of the hot package binary")
                         .default_value("bin/hot.package.bin")
                         .value_hint(ValueHint::FilePath)
@@ -120,15 +120,15 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
     let mut brain = robot.system_connection;
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
-    let cold_package_path = *args.get_one::<&String>(COLD_PACKAGE).unwrap();
-    let hot_package_path = *args.get_one::<&String>(HOT_PACKAGE).unwrap();
+    let cold_package_path = args.get_one::<String>(COLD_PACKAGE).unwrap().clone();
+    let hot_package_path = args.get_one::<String>(HOT_PACKAGE).unwrap().clone();
     let cold_address =
-        u32::from_str_radix(*args.get_one::<&String>(COLD_ADDRESS).unwrap(), 16).unwrap();
+        u32::from_str_radix(args.get_one::<String>(COLD_ADDRESS).unwrap().replace("0x", "").as_str(), 16).unwrap();
     let hot_address =
-        u32::from_str_radix(*args.get_one::<&String>(HOT_ADDRESS).unwrap(), 16).unwrap();
-    let action = *args.get_one::<&String>(ACTION).unwrap();
+        u32::from_str_radix(args.get_one::<String>(HOT_ADDRESS).unwrap().replace("0x", "").as_str(), 16).unwrap();
+    let action = args.get_one::<String>(ACTION).unwrap();
     let overwrite = true;
-    let index = *args.get_one::<u8>(INDEX).unwrap();
+    let index = *args.get_one::<u8>(INDEX).unwrap() - 1;
     let timestamp = SystemTime::now();
     let file_name = format!("slot_{}.bin", index);
     let file_ini = format!("slot_{}.ini", index);
@@ -141,7 +141,7 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
 
     let ini = generate_program_ini(
         "0.1.0",
-        "none",
+        "PROS",
         program_name,
         "0.1.0",
         index,
@@ -149,23 +149,36 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         description,
         timestamp,
     );
+    println!("{}", String::from_utf8(ini.clone()).unwrap());
 
     let cold_package = cold_handle.join().unwrap().unwrap();
     let cold_hash = base64::engine::general_purpose::STANDARD
         .encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let cold_len = cold_package.len();
     let crc = CRC32.checksum(&cold_package);
-    let available_package = GetFileMetadataByName::new(Vid::System, 0, &cold_hash[..24]).send(&mut brain)
-        .unwrap();
-    if available_package.size != cold_len as u32 || available_package.crc != crc {
-        info!("Cold package differs! Re-uploading...");
+    let cold_package_name = &cold_hash[..22];
+
+    let mut skip_cold = false;
+
+    let available_package = GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name).send(&mut brain);
+
+    if let Ok(package) = &available_package {
+        if package.size == cold_len as u32 && package.crc == crc {
+            skip_cold = true;
+        }
+    } else {
+        // todo handle/check nack
+    }
+
+    if !skip_cold {
+        info!("Invalid cold package! Re-uploading...");
         upload_file(
             &mut brain,
             TransferTarget::Flash,
             FileType::Bin,
             Vid::Pros,
             &cold_package,
-            &cold_hash[..24],
+            cold_package_name,
             cold_address,
             crc,
             overwrite,
@@ -188,8 +201,8 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         crc,
         overwrite,
         timestamp,
-        Some((&cold_hash[..24], Vid::V5Cli)),
-        action,
+        Some((cold_package_name, Vid::Pros)),
+        UploadAction::Nothing,
     ).unwrap();
 
     let conf = ini;
@@ -206,13 +219,13 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         overwrite,
         timestamp,
         None,
-        UploadAction::Nothing,
+        action,
     ).unwrap();
 }
 
 fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
     let mut vec = Vec::new();
-    flate2::read::ZlibEncoder::new(std::fs::File::open(path)?, Compression::best())
+    flate2::read::GzEncoder::new(std::fs::File::open(path)?, Compression::best())
         .read_to_end(&mut vec)?;
     vec.shrink_to_fit();
     return Ok(vec);
@@ -274,14 +287,14 @@ fn generate_program_ini(
         .set("version", project_version)
         .set("ide", ide);
     ini.with_section(Some("program"))
-        .set("version", program_version)
+        .set("version", "16777216")
         .set("name", name)
         .set("slot", slot.to_string())
         .set("icon", icon)
         .set("description", description)
         .set(
             "date",
-            OffsetDateTime::from(timestamp).format(&Rfc3339).unwrap(),
+            OffsetDateTime::from(timestamp).format(&Rfc3339).unwrap().trim_end_matches('Z'),
         );
     let mut conf = Vec::<u8>::new();
     conf.reserve(128);

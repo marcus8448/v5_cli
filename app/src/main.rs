@@ -22,28 +22,27 @@ fn main() {
                 .help("Connect to brain via bluetooth instead of a serial port")
                 .short('b')
                 .action(ArgAction::SetTrue)
-                .conflicts_with("port"),
+                .conflicts_with(PORT),
         )
         .arg(
             Arg::new(MAC_ADDRESS)
                 .help("Connect to brain via bluetooth instead of a serial port")
                 .short('m')
                 .action(ArgAction::Set)
-                .requires("bluetooth"),
+                .requires(BLUETOOTH),
         )
         .arg(
             Arg::new(PIN)
                 .help("Connect the PIN of the brain to be used with bluetooth")
                 .short('i')
-                .global(true)
                 .action(ArgAction::Set)
-                .requires("bluetooth"),
+                .requires(BLUETOOTH),
         )
         .arg(
             Arg::new(VERBOSE)
                 .help("Enables extra debug logging")
                 .short('v')
-                .global(true)
+                .global(false)
                 .action(ArgAction::SetTrue),
         );
 
@@ -57,20 +56,22 @@ fn main() {
         command = plugin.create_commands(command, &mut registry);
     }
 
-    let matches = command.get_matches_mut();
-    match matches.subcommand() {
+    let root = command.get_matches_mut();
+    match root.subcommand() {
         None => {
             command.print_help().unwrap();
         }
         Some((name, matches)) => {
-            if matches.get_flag(BLUETOOTH) {
-                let mac_address: Option<&String> = matches.get_one(MAC_ADDRESS);
-                let pin: Option<&String> = matches.get_one(PIN);
+            if root.get_flag(BLUETOOTH) {
+                let mac_address: Option<&String> = root.get_one(MAC_ADDRESS);
+                let pin: Option<&String> = root.get_one(PIN);
 
-                tokio::runtime::Builder::new_multi_thread()
+                let runtime = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
-                    .unwrap()
+                    .unwrap();
+                v5_core::TOKIO_RUNTIME.set(runtime.handle().clone()).unwrap();
+                v5_core::TOKIO_RUNTIME.get().unwrap()
                     .block_on(async {
                         let robot =
                             v5_core::connection::bluetooth::connect_to_robot(mac_address, pin)
@@ -78,7 +79,7 @@ fn main() {
                         registry.get(name).unwrap()(matches.clone(), robot.expect("Robot"));
                     });
             } else {
-                let port: Option<&String> = matches.get_one(PORT);
+                let port: Option<&String> = root.get_one(PORT);
                 registry.get(name).unwrap()(
                     matches.clone(),
                     v5_core::connection::serial::connect_to_robot(port),
