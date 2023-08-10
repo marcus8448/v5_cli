@@ -1,7 +1,6 @@
 use std::io;
 use std::io::Read;
 use std::path::Path;
-use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 use base64::Engine;
@@ -10,8 +9,9 @@ use libdeflater::{CompressionLvl, Compressor};
 
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::connection::{RobotConnection, SerialConnection};
+use v5_core::connection::{RobotConnectionOptions, RobotConnectionType, SerialConnection};
 use v5_core::crc::{Algorithm, Crc};
+use v5_core::error::CommandError;
 use v5_core::log::info;
 use v5_core::packet::filesystem::{
     FileTransferComplete, FileTransferInitialize, FileTransferWrite, FileType,
@@ -53,7 +53,7 @@ impl Plugin for UploadPlugin {
     }
 
     fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
-        registry.insert(UPLOAD, Box::new(upload_program));
+        registry.insert(UPLOAD, Box::new(move |args, connection| Box::pin(upload_program(args, connection))));
         command.subcommand(
             Command::new(UPLOAD)
                 .about("Uploads a program to the robot")
@@ -123,8 +123,7 @@ impl Plugin for UploadPlugin {
     }
 }
 
-fn upload_program(args: ArgMatches, robot: RobotConnection) {
-    let mut brain = robot.system_connection;
+async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Result<(), CommandError> {
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
     let cold_package_path = args.get_one::<String>(COLD_PACKAGE).unwrap().clone();
@@ -153,10 +152,9 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
     let file_ini = format!("slot_{}.ini", index);
     let action = UploadAction::try_from(action.as_str()).unwrap();
 
-    let cold_handle: JoinHandle<Result<Vec<u8>, io::Error>> =
-        std::thread::spawn(move || load_compressed(cold_package_path)); //probably overkill
-    let hot_handle: JoinHandle<Result<Vec<u8>, io::Error>> =
-        std::thread::spawn(move || load_compressed(hot_package_path));
+    let brain = tokio::task::spawn(v5_core::connection::connect(RobotConnectionType::System, options));
+    let cold_handle = tokio::task::spawn(load_compressed(cold_package_path)); //probably overkill
+    let hot_handle = tokio::task::spawn(load_compressed(hot_package_path));
 
     let ini = generate_program_ini(
         "0.1.0",
@@ -167,10 +165,10 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         "USER902x.bmp",
         description,
         timestamp,
-    );
+    ).await;
     println!("{}", String::from_utf8(ini.clone()).unwrap());
 
-    let cold_package = cold_handle.join().unwrap().unwrap();
+    let cold_package = cold_handle.await.unwrap()?;
     let cold_hash = base64::engine::general_purpose::STANDARD
         .encode(extendhash::md5::compute_hash(cold_package.as_slice()));
     let cold_len = cold_package.len();
@@ -179,8 +177,9 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
 
     let mut skip_cold = false;
 
+    let mut brain = brain.await.unwrap()?;
     let available_package =
-        GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name).send(&mut brain);
+        GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name).send(&mut brain).await;
 
     if let Ok(package) = &available_package {
         if package.size == cold_len as u32 && package.crc == crc {
@@ -205,11 +204,10 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
             timestamp,
             None,
             UploadAction::Nothing,
-        )
-        .unwrap();
+        ).await?;
     }
 
-    let hot_package = hot_handle.join().unwrap().unwrap();
+    let hot_package = hot_handle.await.unwrap()?;
     let crc = CRC32.checksum(&hot_package);
     upload_file(
         &mut brain,
@@ -224,8 +222,7 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         timestamp,
         Some((cold_package_name, Vid::Pros)),
         UploadAction::Nothing,
-    )
-    .unwrap();
+    ).await?;
 
     let conf = ini;
     let crc = CRC32.checksum(&conf);
@@ -242,11 +239,11 @@ fn upload_program(args: ArgMatches, robot: RobotConnection) {
         timestamp,
         None,
         action,
-    )
-    .unwrap();
+    ).await?;
+    Ok(())
 }
 
-fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
+async fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
     let mut file = std::fs::File::open(path)?;
     let len = usize::try_from(file.metadata().unwrap().len()).expect("file too large");
     let mut compressor = Compressor::new(CompressionLvl::best());
@@ -262,8 +259,8 @@ fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
     Ok(compressed_data)
 }
 
-fn upload_file(
-    brain: &mut Box<dyn SerialConnection>,
+async fn upload_file(
+    brain: &mut Box<dyn SerialConnection + Send>,
     target: TransferTarget,
     file_type: FileType,
     vid: Vid,
@@ -275,7 +272,7 @@ fn upload_file(
     timestamp: SystemTime,
     linked_file: Option<(&str, Vid)>,
     action: UploadAction,
-) -> v5_core::error::Result<()> {
+) -> Result<(), CommandError> {
     let meta = FileTransferInitialize::new(
         TransferDirection::Upload,
         target,
@@ -289,22 +286,22 @@ fn upload_file(
         remote_name,
         timestamp,
     )
-    .send(brain)?;
+    .send(brain).await?;
     assert!(meta.file_size >= file.len() as u32);
     if let Some((name, vid)) = linked_file {
-        SetFileTransferLink::new(name, vid).send(brain)?;
+        SetFileTransferLink::new(name, vid).send(brain).await?;
     }
     let max_packet_size = meta.max_packet_size / 2;
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);
-        FileTransferWrite::new(&file[i..end], address + i as u32).send(brain)?;
+        FileTransferWrite::new(&file[i..end], address + i as u32).send(brain).await?;
     }
-    FileTransferComplete::new(action).send(brain)?;
+    FileTransferComplete::new(action).send(brain).await?;
     Ok(())
 }
 
-fn generate_program_ini(
+async fn generate_program_ini(
     project_version: &str,
     ide: &str,
     name: &str,

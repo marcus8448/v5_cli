@@ -1,8 +1,7 @@
 use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
 use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::connection::{RobotConnection, SerialConnection};
-use v5_core::error::Error;
-use v5_core::log::error;
+use v5_core::connection::{RobotConnectionOptions, RobotConnectionType};
+use v5_core::error::CommandError;
 use v5_core::packet::filesystem::{
     DeleteFile, GetDirectoryCount, GetFileMetadataByIndex, GetFileMetadataByName, Vid,
 };
@@ -14,7 +13,7 @@ use v5_core::plugin::{CommandRegistry, Plugin};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, CommandError>;
 
 // export_plugin!(Box::new(UploadPlugin::default()));
 
@@ -47,7 +46,7 @@ impl Plugin for ManagePlugin {
     }
 
     fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
-        registry.insert(MANAGE, Box::new(manage));
+        registry.insert(MANAGE, Box::new(move |args, connection| Box::pin(manage(args, connection))));
         command.subcommand(
             Command::new(MANAGE)
                 .about("Manage the robot brain")
@@ -181,30 +180,29 @@ impl Plugin for ManagePlugin {
     }
 }
 
-fn manage(args: ArgMatches, robot: RobotConnection) {
-    let brain = robot.system_connection;
+async fn manage(args: ArgMatches, options: RobotConnectionOptions) -> Result<()>{
     if let Some((command, args)) = args.subcommand() {
         match command {
-            STATUS => get_status(brain),
-            METADATA => get_metadata(brain, args),
-            LIST_FILES => list_files(brain, args),
-            STOP => stop_execution(brain),
-            RUN => execute_program(brain, args),
-            REMOVE_ALL_PROGRAMS => remove_all_programs(brain, args),
-            REMOVE_FILE => remove_file(brain, args),
-            REMOVE_PROGRAM => remove_program(brain, args),
-            KERNEL_VARIABLE => kernel_variable(brain, args),
-            CAPTURE => capture_screen(brain, args),
-            _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
+            STATUS => get_status(options).await,
+            METADATA => get_metadata(options, args).await,
+            LIST_FILES => list_files(options, args).await,
+            STOP => stop_execution(options).await,
+            RUN => execute_program(options, args).await,
+            REMOVE_ALL_PROGRAMS => remove_all_programs(options, args).await,
+            REMOVE_FILE => remove_file(options, args).await,
+            REMOVE_PROGRAM => remove_program(options, args).await,
+            KERNEL_VARIABLE => kernel_variable(options, args).await,
+            CAPTURE => capture_screen(options, args).await,
+            _ => Err(CommandError::InvalidSubcommand),
         }
-        .unwrap()
     } else {
-        error!("Missing subcommand (see `--help`)");
+        Err(CommandError::InvalidSubcommand)
     }
 }
 
-fn get_status(mut brain: Box<dyn SerialConnection>) -> Result<()> {
-    let status = GetSystemStatus::new().send(&mut brain)?;
+async fn get_status(options: RobotConnectionOptions) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    let status = GetSystemStatus::new().send(&mut brain).await?;
     println!(
         "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
         status.system, status.cpu0, status.cpu1, status.touch, status.system_id
@@ -212,7 +210,8 @@ fn get_status(mut brain: Box<dyn SerialConnection>) -> Result<()> {
     Ok(())
 }
 
-fn get_metadata(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn get_metadata(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let metadata = GetFileMetadataByName::new(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
         0,
@@ -220,7 +219,7 @@ fn get_metadata(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Resu
             .expect("missing file name!")
             .as_str(),
     )
-    .send(&mut brain)?;
+    .send(&mut brain).await?;
 
     println!(
         "Name: {}\nVid: {}\nSize: {}\nAddress: {}\n CRC: {}\nFile Type: {}\nTimestamp: {}",
@@ -237,95 +236,104 @@ fn get_metadata(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Resu
     Ok(())
 }
 
-fn list_files(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn list_files(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let amount = GetDirectoryCount::new(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
         *args.get_one::<u8>(OPTION).unwrap_or(&0),
     )
-    .send(&mut brain)?;
+    .send(&mut brain).await?;
 
     for i in 0..amount {
         println!(
             "{}\n--",
-            GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?
+            GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain).await?
         );
     }
     Ok(())
 }
 
-fn stop_execution(mut brain: Box<dyn SerialConnection>) -> Result<()> {
-    ExecuteProgram::new(Vid::User, 0x80, "").send(&mut brain)?;
+async fn stop_execution(options: RobotConnectionOptions) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    ExecuteProgram::new(Vid::User, 0x80, "").send(&mut brain).await?;
     Ok(())
 }
 
-fn execute_program(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn execute_program(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("no slot provided");
-    ExecuteProgram::new(vid, 0x00, format!("slot_{}.bin", slot).as_str()).send(&mut brain)?;
+    ExecuteProgram::new(vid, 0x00, format!("slot_{}.bin", slot).as_str()).send(&mut brain).await?;
     Ok(())
 }
 
-fn remove_all_programs(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn remove_all_programs(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
-    let c = GetDirectoryCount::new(vid, 0).send(&mut brain)?;
+    let c = GetDirectoryCount::new(vid, 0).send(&mut brain).await?;
     let mut vec = Vec::new();
     vec.reserve(c as usize);
     for i in 0..c {
-        vec.push(GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain)?);
+        vec.push(GetFileMetadataByIndex::new(i as u8, 0).send(&mut brain).await?);
     }
 
     for meta in vec {
-        DeleteFile::new(vid, true, &meta.name).send(&mut brain)?;
+        DeleteFile::new(vid, true, &meta.name).send(&mut brain).await?;
     }
     Ok(())
 }
 
-fn remove_file(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn remove_file(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let name = args
         .get_one::<String>(FILE_NAME)
         .expect("missing name")
         .clone();
-    DeleteFile::new(vid, false, &name).send(&mut brain)?;
+    DeleteFile::new(vid, false, &name).send(&mut brain).await?;
     Ok(())
 }
 
-fn remove_program(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn remove_program(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("missing slot");
-    DeleteFile::new(vid, false, &format!("slot_{}.bin", slot)).send(&mut brain)?;
-    DeleteFile::new(vid, false, &format!("slot_{}.ini", slot)).send(&mut brain)?;
+    DeleteFile::new(vid, false, &format!("slot_{}.bin", slot)).send(&mut brain).await?;
+    DeleteFile::new(vid, false, &format!("slot_{}.ini", slot)).send(&mut brain).await?;
     Ok(())
 }
 
-fn kernel_variable(brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn kernel_variable(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
-            GET => get_kernel_variable(brain, args),
-            SET => set_kernel_variable(brain, args),
-            _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
+            GET => get_kernel_variable(options, args).await,
+            SET => set_kernel_variable(options, args).await,
+            _ => return Err(CommandError::InvalidSubcommand)
         }
     } else {
-        Err(Error::Generic("Missing subcommand (see `--help`)"))
+        return Err(CommandError::InvalidSubcommand)
     }
 }
 
-fn get_kernel_variable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn get_kernel_variable(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
-    let value = GetKernelVariable::new(variable).send(&mut brain)?;
+    let value = GetKernelVariable::new(variable).send(&mut brain).await?;
     println!("{}", value);
     Ok(())
 }
 
-fn set_kernel_variable(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn set_kernel_variable(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = args.get_one::<String>(VALUE).unwrap();
-    SetKernelVariable::new(variable, value.as_str()).send(&mut brain)?;
+    SetKernelVariable::new(variable, value.as_str()).send(&mut brain).await?;
 
     println!("set");
     Ok(())
 }
 
-fn capture_screen(_brain: Box<dyn SerialConnection>, _args: &ArgMatches) -> Result<()> {
+async fn capture_screen(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<()> {
+    let _brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     Ok(())
 }

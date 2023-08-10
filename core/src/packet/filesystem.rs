@@ -7,7 +7,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use crate::buffer::{ReadBuffer, WriteBuffer};
-use crate::error::{Error, Result};
+use crate::error::ParseError;
 use crate::packet::Packet;
 use crate::packet::system::{Channel, convert_from_vex_timestamp, convert_to_vex_timestamp};
 
@@ -67,14 +67,14 @@ impl Default for UploadAction {
 }
 
 impl TryFrom<&str> for UploadAction {
-    type Error = Error;
+    type Error = ParseError;
 
-    fn try_from(value: &str) -> Result<Self> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value.to_lowercase().as_str() {
             "nothing" => Ok(Self::Nothing),
             "run" => Ok(Self::Run),
             "screen" => Ok(Self::RunScreen),
-            _ => Err(Error::InvalidName(value.to_string())),
+            _ => Err(ParseError::InvalidName(value.to_string())),
         }
     }
 }
@@ -177,13 +177,13 @@ impl FileType {
 }
 
 impl TryFrom<&str> for FileType {
-    type Error = Error;
+    type Error = ParseError;
 
-    fn try_from(value: &str) -> Result<Self> {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value.to_lowercase().as_str() {
             "bin" => Ok(Self::Bin),
             "ini" => Ok(Self::Ini),
-            _ => Err(Error::InvalidName(value.to_string())),
+            _ => Err(ParseError::InvalidName(value.to_string())),
         }
     }
 }

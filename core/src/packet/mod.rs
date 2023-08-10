@@ -1,12 +1,10 @@
 use std::fmt::Debug;
-use std::io::Write;
 use std::mem::size_of;
 
 use crc::{Crc, CRC_16_XMODEM};
 
 use crate::buffer::{FixedReadBuffer, ReadBuffer, WriteBuffer};
 use crate::connection::SerialConnection;
-use crate::error::Result;
 
 pub mod competition;
 pub mod filesystem;
@@ -18,6 +16,7 @@ const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 const EXT_PACKET_ID: u8 = 0x56;
 
+#[async_trait::async_trait]
 pub trait Packet<const ID: u8>: Debug {
     type Response;
 
@@ -35,7 +34,7 @@ pub trait Packet<const ID: u8>: Debug {
         len: usize,
     ) -> std::io::Result<Self::Response>;
 
-    fn send(&mut self, connection: &mut Box<dyn SerialConnection>) -> Result<Self::Response> {
+    async fn send(&mut self, connection: &mut Box<dyn SerialConnection + Send>) -> std::result::Result<Self::Response, std::io::Error> {
         dbg!(&self);
         let len = self.send_len();
         let mut buffer =
@@ -67,19 +66,19 @@ pub trait Packet<const ID: u8>: Debug {
         }
 
         // println!("sending: {:02X?}", &buffer);
-        connection.write_all(&buffer)?;
-        connection.flush()?;
+        connection.write(&buffer).await?;
+        connection.flush().await?;
 
         let mut buf = [0_u8; 1];
 
         loop {
             println!("Searching for header");
-            connection.read_exact(&mut buf)?;
+            connection.read(&mut buf).await?;
 
             if buf[0] != RESPONSE_HEADER[0] {
                 continue;
             }
-            connection.read_exact(&mut buf)?;
+            connection.read(&mut buf).await?;
             if buf[0] != RESPONSE_HEADER[1] {
                 continue;
             }
@@ -91,14 +90,14 @@ pub trait Packet<const ID: u8>: Debug {
 
         let mut metadata = [0_u8; 2];
 
-        connection.read_exact(&mut metadata)?;
+        connection.read(&mut metadata).await?;
         let command = metadata[0];
         let mut len: usize = metadata[1] as usize;
 
         payload.extend_from_slice(&metadata);
 
         if !Self::is_simple() && len & 0x80 != 0 {
-            connection.read_exact(&mut buf)?;
+            connection.read(&mut buf).await?;
             len = ((len & 0x7f) << 8) + buf[0] as usize;
             payload.push(buf[0]);
         }
@@ -107,7 +106,7 @@ pub trait Packet<const ID: u8>: Debug {
         payload.reserve(len);
         payload.resize(start + len, 0_u8);
 
-        connection.read_exact(&mut payload[start..])?;
+        connection.read(&mut payload[start..]).await?;
 
         // println!(
         //     "received data ({}): {:02X?}",
@@ -125,7 +124,7 @@ pub trait Packet<const ID: u8>: Debug {
 
             if let Some(nack) = Nack::maybe_find(payload[start + 1]) {
                 println!("NACK: {:?} ({})", &nack, payload[start + 1]);
-                return Err(crate::error::Error::Generic("NACK"));
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "NACK"));
             }
             Ok(self.read_response(
                 &mut FixedReadBuffer::new(&payload[start + 2..payload.len() - 2]),

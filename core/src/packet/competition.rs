@@ -1,7 +1,7 @@
 use std::io;
 
 use crate::buffer::{ReadBuffer, WriteBuffer};
-use crate::error::{Error, Result};
+use crate::error::ParseError;
 use crate::packet::Packet;
 
 #[repr(u8)]
@@ -13,14 +13,14 @@ pub enum CompetitionState {
 }
 
 impl TryFrom<u8> for CompetitionState {
-    type Error = Error;
+    type Error = ParseError;
 
-    fn try_from(value: u8) -> Result<Self> {
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             11 => Ok(Self::Disabled),
             10 => Ok(Self::Autonomous),
             8 => Ok(Self::OpControl),
-            _ => Err(Error::InvalidId(value)),
+            _ => Err(ParseError::InvalidId(value as u32)),
         }
     }
 }

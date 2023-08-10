@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use clap::{ArgMatches, Command};
 use libloading::Library;
 use log::error;
 
-use crate::connection::RobotConnection;
+use crate::connection::RobotConnectionOptions;
 
 #[no_mangle]
 pub static mut DEFAULT_PLUGIN_REF: Option<
@@ -14,7 +16,7 @@ static mut EXTERNAL_LIBRARIES: Vec<Library> = Vec::new(); // We DO NOT want to d
 pub const PORT: &str = "port";
 
 pub type CommandRegistry = HashMap<&'static str, Box<ExecutableCommand>>;
-pub type ExecutableCommand = fn(ArgMatches, RobotConnection);
+pub type ExecutableCommand = fn(ArgMatches, RobotConnectionOptions) -> Pin<Box<dyn Future<Output = Result<(), crate::error::CommandError>>>>;
 
 #[macro_export]
 macro_rules! export_plugin {

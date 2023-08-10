@@ -3,31 +3,29 @@ use std::time::Duration;
 
 use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType};
 
-use crate::connection::{RobotConnection, SerialConnection};
+use crate::connection::SerialConnection;
+use crate::error::ConnectionError;
 
-struct SerialPortConnection {
+pub struct SerialPortConnection {
     serial_port: Box<dyn SerialPort>,
 }
 
-impl Read for SerialPortConnection {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.serial_port.read(buf)
-    }
-}
-
-impl Write for SerialPortConnection {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.serial_port.write(buf)
+#[async_trait::async_trait]
+impl SerialConnection for SerialPortConnection { //fixme async
+    async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.serial_port.write_all(buf)
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    async fn flush(&mut self) -> std::io::Result<()> {
         self.serial_port.flush()
     }
+
+    async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        self.serial_port.read_exact(buf)
+    }
 }
 
-impl SerialConnection for SerialPortConnection {}
-
-pub fn find_ports() -> Option<(String, String)> {
+pub(crate) fn find_ports(_port: Option<String>) -> Result<(String, String), ConnectionError> {
     let mut system = Vec::new();
     let mut user = Vec::new();
     let mut controller = Vec::new();
@@ -56,12 +54,12 @@ pub fn find_ports() -> Option<(String, String)> {
 
     if system.is_empty() || user.is_empty() {
         if unknown.len() >= 2 {
-            return Some((unknown[0].clone(), unknown[1].clone()));
+            return Ok((unknown[0].clone(), unknown[1].clone()));
         }
-        return None;
+        return Err(ConnectionError::DeviceNotFound);
     }
 
-    Some((system[0].clone(), user[0].clone()))
+    Ok((system[0].clone(), user[0].clone()))
 }
 
 pub fn print_out_ports() {
@@ -83,9 +81,8 @@ pub fn print_out_ports() {
     }
 }
 
-pub fn connect_to_robot(_port: Option<&String>) -> RobotConnection {
-    let (system_port, user_port) = find_ports().expect("Unable to find v5 port!");
-    let mut system = serialport::new(system_port, 115200)
+pub(crate) fn open_connection(port: String) -> Result<SerialPortConnection, ConnectionError> {
+    let mut user = serialport::new(port, 115200)
         .parity(Parity::None)
         .data_bits(DataBits::Eight)
         .timeout(Duration::from_secs(5))
@@ -93,20 +90,6 @@ pub fn connect_to_robot(_port: Option<&String>) -> RobotConnection {
         .open()
         .expect("Failed to connect to robot!");
 
-    let mut user = serialport::new(user_port, 115200)
-        .parity(Parity::None)
-        .data_bits(DataBits::Eight)
-        .timeout(Duration::from_secs(5))
-        .flow_control(FlowControl::None)
-        .open()
-        .expect("Failed to connect to robot!");
-    system.write_data_terminal_ready(true).unwrap();
     user.write_data_terminal_ready(true).unwrap();
-
-    RobotConnection {
-        system_connection: Box::new(SerialPortConnection {
-            serial_port: system,
-        }),
-        user_connection: Box::new(SerialPortConnection { serial_port: user }),
-    }
+    return Ok(SerialPortConnection { serial_port: user })
 }

@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
 use v5_core::clap::{Arg, ArgAction, Command};
+use v5_core::connection::RobotConnectionOptions;
+use v5_core::error::CommandError;
 use v5_core::plugin::Plugin;
 
 const PORT: &str = "port";
@@ -12,6 +14,14 @@ const VERBOSE: &str = "verbose";
 pub static BASE_COMMAND: OnceLock<Command> = OnceLock::new();
 
 fn main() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to build runtime")
+        .block_on(run())
+}
+
+async fn run() {
     let mut command = Command::new("robot")
         .author("marcus8448")
         .about("Manages a connection with a Vex V5 robot")
@@ -30,14 +40,14 @@ fn main() {
         )
         .arg(
             Arg::new(MAC_ADDRESS)
-                .help("Connect to brain via bluetooth instead of a serial port")
+                .help("The MAC address of the brain to be used with bluetooth")
                 .short('m')
                 .action(ArgAction::Set)
                 .requires(BLUETOOTH),
         )
         .arg(
             Arg::new(PIN)
-                .help("Connect the PIN of the brain to be used with bluetooth")
+                .help("The PIN of the brain to be used with bluetooth")
                 .short('i')
                 .action(ArgAction::Set)
                 .requires(BLUETOOTH),
@@ -67,29 +77,33 @@ fn main() {
             command.print_help().unwrap();
         }
         Some((name, matches)) => {
-            if root.get_flag(BLUETOOTH) {
+            let options = if root.get_flag(BLUETOOTH) {
                 let mac_address: Option<&String> = root.get_one(MAC_ADDRESS);
                 let pin: Option<&String> = root.get_one(PIN);
 
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                v5_core::TOKIO_RUNTIME
-                    .set(runtime.handle().clone())
-                    .unwrap();
-                v5_core::TOKIO_RUNTIME.get().unwrap().block_on(async {
-                    let robot =
-                        v5_core::connection::bluetooth::connect_to_robot(mac_address, pin).await;
-                    registry.get(name).unwrap()(matches.clone(), robot.expect("Robot"));
-                });
+                RobotConnectionOptions::Bluetooth {
+                    mac_address: mac_address.cloned(),
+                    pin: pin.cloned(),
+                }
             } else {
                 let port: Option<&String> = root.get_one(PORT);
-                registry.get(name).unwrap()(
-                    matches.clone(),
-                    v5_core::connection::serial::connect_to_robot(port),
-                );
-            }
+
+                RobotConnectionOptions::Serial { port: port.cloned() }
+            };
+
+            match registry.get(name).unwrap()(matches.clone(), options).await {
+                Ok(_) => {}
+                Err(err) => {
+                    match err {
+                        CommandError::InvalidSubcommand => {
+                            command.print_help().unwrap();
+                        }
+                        _ => {
+                            println!("{}", err);
+                        }
+                    }
+                }
+            };
         }
     }
 }

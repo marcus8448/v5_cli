@@ -1,44 +1,55 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
 
-pub type Result<T> = std::result::Result<T, Error>;
+use thiserror::Error;
 
-#[derive(Debug)]
-pub enum Error {
-    Generic(&'static str),
-    External(Box<dyn std::error::Error + Send + Sync>),
-    InvalidId(u8),
+#[derive(Error, Debug)]
+pub enum ConnectionError {
+    #[error("no v5 device found!")]
+    DeviceNotFound,
+    #[error("no bluetooth adapters found! Is bluetooth on?")]
+    NoBluetoothAdapters,
+    #[error("bluetooth error")]
+    BluetoothError(#[from] btleplug::Error),
+    #[error("invalid PIN")]
+    InvalidPIN
+}
+
+#[derive(Error, Debug)]
+pub enum CommandError {
+    #[error("invalid subcommand")]
+    InvalidSubcommand,
+    #[error("missing argument `{0}`")]
+    InvalidArgument(&'static str),
+    #[error("robot connection error")]
+    ConnectionError(#[from] ConnectionError),
+    #[error("robot communications error")]
+    CommunicationError(#[from] std::io::Error),
+    #[error("robot communications parsing error")]
+    ParseError(#[from] ParseError)
+}
+
+#[derive(Error, Debug)]
+pub enum ParseError {
+    #[error("missing key `{0}`")]
+    MissingKey(&'static str),
+    #[error("invalid name `{0}`")]
     InvalidName(String),
-    Unknown,
+    #[error("invalid id {0}")]
+    InvalidId(u32)
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Generic(str) => write!(f, "{}", str),
-            Error::External(ext) => Display::fmt(ext, f),
-            Error::InvalidId(id) => write!(f, "Invalid id: {}", id),
-            Error::InvalidName(name) => write!(f, "Invalid name: {}", name),
-            Error::Unknown => write!(f, "Unknown"),
+impl From<ParseError> for std::io::Error {
+    fn from(value: ParseError) -> Self {
+        match value {
+            ParseError::MissingKey(key) => {
+                std::io::Error::new(std::io::ErrorKind::NotFound, key)
+            }
+            ParseError::InvalidName(name) => {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, name)
+            }
+            ParseError::InvalidId(id) => {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, id.to_string())
+            }
         }
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl From<btleplug::Error> for Error {
-    fn from(value: btleplug::Error) -> Self {
-        Error::External(Box::new(value))
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(value: std::io::Error) -> Self {
-        Error::External(Box::new(value))
-    }
-}
-
-impl From<Error> for std::io::Error {
-    fn from(value: Error) -> Self {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, value)
     }
 }

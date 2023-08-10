@@ -1331,6 +1331,7 @@ dependencies = [
 name = "v5_core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "btleplug",
  "clap",
  "crc",
@@ -1339,6 +1340,7 @@ dependencies = [
  "log",
  "serde",
  "serialport",
+ "thiserror",
  "time",
  "tokio",
  "uuid",
@@ -1367,6 +1369,7 @@ dependencies = [
  "extendhash",
  "libdeflater",
  "rust-ini",
+ "tokio",
  "v5_core",
 ]
 

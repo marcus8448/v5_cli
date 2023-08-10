@@ -4,7 +4,7 @@ use std::ops::Add;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::buffer::{ReadBuffer, WriteBuffer};
-use crate::error::{Error, Result};
+use crate::error::ParseError;
 use crate::packet::filesystem::Vid;
 use crate::packet::Packet;
 
@@ -46,13 +46,13 @@ impl From<KernelVariable> for &'static str {
 }
 
 impl TryFrom<&str> for KernelVariable {
-    type Error = Error;
+    type Error = ParseError;
 
-    fn try_from(id: &str) -> Result<Self> {
+    fn try_from(id: &str) -> std::result::Result<Self, Self::Error> {
         match id.to_lowercase().as_str() {
             "team_number" => Ok(Self::TeamNumber),
             "robot_name" => Ok(Self::RobotName),
-            _ => Err(Error::InvalidName(id.to_string())),
+            _ => Err(ParseError::InvalidName(id.to_string())),
         }
     }
 }
@@ -65,13 +65,13 @@ pub enum Product {
 }
 
 impl Product {
-    fn parse(id: u8, flag: u8) -> Result<Self> {
+    fn parse(id: u8, flag: u8) -> std::result::Result<Self, ParseError> {
         match id {
             0x10 => Ok(Self::Brain),
             0x11 => Ok(Self::Controller {
                 has_robot: flag & 0b10 == 0b10,
             }),
-            _ => Err(Error::InvalidId(id)),
+            _ => Err(ParseError::InvalidId(id as u32)),
         }
     }
 }
@@ -104,13 +104,13 @@ pub enum Channel {
 }
 
 impl TryFrom<u8> for Channel {
-    type Error = Error;
+    type Error = ParseError;
 
-    fn try_from(id: u8) -> Result<Self> {
+    fn try_from(id: u8) -> std::result::Result<Self, Self::Error> {
         match id {
             0 => Ok(Self::Pit),
             1 => Ok(Self::Download),
-            id => Err(Error::InvalidId(id)),
+            id => Err(ParseError::InvalidId(id as u32)),
         }
     }
 }

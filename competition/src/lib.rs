@@ -1,15 +1,12 @@
 use std::time::Duration;
 
 use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
-use v5_core::connection::{RobotConnection, SerialConnection};
-use v5_core::error::Error;
+use v5_core::connection::{RobotConnectionOptions, RobotConnectionType};
+use v5_core::error::CommandError;
 use v5_core::export_plugin;
-use v5_core::log::error;
 use v5_core::packet::competition::{CompetitionState, ManageCompetition};
 use v5_core::packet::Packet;
 use v5_core::plugin::{CommandRegistry, Plugin};
-
-type Result<T> = std::result::Result<T, Error>;
 
 const COMPETITION: &str = "competition";
 
@@ -29,7 +26,7 @@ impl Plugin for CompetitionPlugin {
     }
 
     fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
-        registry.insert(COMPETITION, Box::new(competition));
+        registry.insert(COMPETITION, Box::new(move |args, connection| Box::pin(competition(args, connection))));
         command.subcommand(
             Command::new(COMPETITION)
                 .about("Simulate a competition")
@@ -59,42 +56,44 @@ impl Plugin for CompetitionPlugin {
     }
 }
 
-fn competition(args: ArgMatches, robot: RobotConnection) {
-    let brain = robot.system_connection;
+async fn competition(args: ArgMatches, options: RobotConnectionOptions) -> Result<(), CommandError> {
     if let Some((command, args)) = args.subcommand() {
         match command {
-            START => start(brain, args),
-            AUTONOMOUS => autonomous(brain, args),
-            OPCONTROL => opcontrol(brain, args),
-            DISABLE => disable(brain, args),
-            _ => Err(Error::Generic("Invalid subcommand! (see `--help`)")),
+            START => start(options, args).await,
+            AUTONOMOUS => autonomous(options, args).await,
+            OPCONTROL => opcontrol(options, args).await,
+            DISABLE => disable(options, args).await,
+            _ => Err(CommandError::InvalidSubcommand)
         }
-        .unwrap()
     } else {
-        error!("Missing subcommand (see `--help`)");
+        Err(CommandError::InvalidSubcommand)
     }
 }
 
-fn autonomous(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn autonomous(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    ManageCompetition::new(CompetitionState::Autonomous).send(&mut brain)?;
+    ManageCompetition::new(CompetitionState::Autonomous).send(&mut brain).await?;
     std::thread::sleep(time);
     Ok(())
 }
 
-fn opcontrol(mut brain: Box<dyn SerialConnection>, args: &ArgMatches) -> Result<()> {
+async fn opcontrol(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    ManageCompetition::new(CompetitionState::OpControl).send(&mut brain)?;
+    ManageCompetition::new(CompetitionState::OpControl).send(&mut brain).await?;
     std::thread::sleep(time);
     Ok(())
 }
 
-fn disable(mut brain: Box<dyn SerialConnection>, _args: &ArgMatches) -> Result<()> {
-    ManageCompetition::new(CompetitionState::Disabled).send(&mut brain)?;
+async fn disable(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
+    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    ManageCompetition::new(CompetitionState::Disabled).send(&mut brain).await?;
     Ok(())
 }
 
-fn start(_brain: Box<dyn SerialConnection>, _args: &ArgMatches) -> Result<()> {
+async fn start(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
+    let _brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     //todo
     Ok(())
 }
