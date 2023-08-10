@@ -26,7 +26,10 @@ impl Plugin for CompetitionPlugin {
     }
 
     fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
-        registry.insert(COMPETITION, Box::new(move |args, connection| Box::pin(competition(args, connection))));
+        registry.insert(
+            COMPETITION,
+            Box::new(move |args, connection| Box::pin(competition(args, connection))),
+        );
         command.subcommand(
             Command::new(COMPETITION)
                 .about("Simulate a competition")
@@ -56,24 +59,32 @@ impl Plugin for CompetitionPlugin {
     }
 }
 
-async fn competition(args: ArgMatches, options: RobotConnectionOptions) -> Result<(), CommandError> {
+async fn competition(
+    args: ArgMatches,
+    options: RobotConnectionOptions,
+) -> Result<(), CommandError> {
     if let Some((command, args)) = args.subcommand() {
         match command {
             START => start(options, args).await,
             AUTONOMOUS => autonomous(options, args).await,
             OPCONTROL => opcontrol(options, args).await,
             DISABLE => disable(options, args).await,
-            _ => Err(CommandError::InvalidSubcommand)
+            _ => Err(CommandError::InvalidSubcommand),
         }
     } else {
         Err(CommandError::InvalidSubcommand)
     }
 }
 
-async fn autonomous(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
+async fn autonomous(
+    options: RobotConnectionOptions,
+    args: &ArgMatches,
+) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    ManageCompetition::new(CompetitionState::Autonomous).send(&mut brain).await?;
+    ManageCompetition::new(CompetitionState::Autonomous)
+        .send(&mut brain)
+        .await?;
     std::thread::sleep(time);
     Ok(())
 }
@@ -81,14 +92,18 @@ async fn autonomous(options: RobotConnectionOptions, args: &ArgMatches) -> Resul
 async fn opcontrol(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    ManageCompetition::new(CompetitionState::OpControl).send(&mut brain).await?;
+    ManageCompetition::new(CompetitionState::OpControl)
+        .send(&mut brain)
+        .await?;
     std::thread::sleep(time);
     Ok(())
 }
 
 async fn disable(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
-    ManageCompetition::new(CompetitionState::Disabled).send(&mut brain).await?;
+    ManageCompetition::new(CompetitionState::Disabled)
+        .send(&mut brain)
+        .await?;
     Ok(())
 }
 

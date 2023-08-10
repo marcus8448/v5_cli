@@ -1,5 +1,4 @@
 use std::fmt::{Debug, Display, Formatter};
-use std::io;
 use std::mem::size_of;
 use std::time::SystemTime;
 
@@ -206,7 +205,7 @@ impl Packet<0x10> for FileTransferChannel {
         2
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(1);
         buffer.write_u8(self.channel.into());
         Ok(())
@@ -273,7 +272,7 @@ impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
         size_of::<u8>() * 4 + size_of::<u32>() * 3 + 4 + size_of::<u32>() * 2 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.direction.into());
         buffer.write_u8(self.target.into());
         buffer.write_u8(self.vid.into());
@@ -319,7 +318,7 @@ impl Packet<0x12> for FileTransferComplete {
         1
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.upload_action.into());
         Ok(())
     }
@@ -363,7 +362,7 @@ impl<'a> Packet<0x13> for FileTransferWrite<'a> {
             }
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u32(self.address);
         buffer.write_raw(self.slice);
         if self.slice.len() % 4 != 0 {
@@ -400,7 +399,7 @@ impl Packet<0x14> for FileTransferRead {
         size_of::<u32>() + size_of::<u16>()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u32(self.address);
         buffer.write_u16(self.len);
         Ok(())
@@ -436,7 +435,7 @@ impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(0);
         buffer.write_str(self.name, 24);
@@ -471,7 +470,7 @@ impl Packet<0x16> for GetDirectoryCount {
         size_of::<u8>() + size_of::<u8>()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.option);
         Ok(())
@@ -505,7 +504,7 @@ impl Packet<0x17> for GetFileMetadataByIndex {
         size_of::<u8>() + size_of::<u8>()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.index);
         buffer.write_u8(self.option);
         Ok(())
@@ -553,7 +552,7 @@ impl<'a> Packet<0x19> for GetFileMetadataByName<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.option);
         buffer.write_str(self.file_name, 24);
@@ -618,7 +617,7 @@ impl<'a> Packet<0x1A> for SetProgramFileMetadata<'a> {
         0
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.options);
         buffer.write_u32(self.address);
@@ -664,7 +663,7 @@ impl<'a> Packet<0x1B> for DeleteFile<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(if self.erase_all { 0x80 } else { 0 });
         buffer.write_str(self.file_name, 24);
@@ -705,7 +704,7 @@ impl<'a> Packet<0x1C> for GetProgramFileSlot<'a> {
         0
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.options);
         buffer.write_str(self.file_name, 24);

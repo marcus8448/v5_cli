@@ -25,17 +25,11 @@ const CHARACTERISTIC_RX_USER: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_7
 
 const CHARACTERISTIC_CODE: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13e5); // READ | WRITE_WITHOUT_RESPONSE | WRITE
 
-struct BluetoothConnectionProvider {
-    mac_address: Option<String>,
-    pin: Option<String>,
-}
-
 pub(crate) struct Characteristics {
     pub(crate) tx_data: Characteristic,
     pub(crate) rx_data: Characteristic,
     pub(crate) tx_user: Characteristic,
     pub(crate) rx_user: Characteristic,
-    code: Characteristic
 }
 
 pub(crate) async fn connect_to_robot(
@@ -84,9 +78,7 @@ pub(crate) async fn connect_to_robot(
     }
 
     let peripheral = device.unwrap();
-    let mut new_connection = false;
     if !peripheral.is_connected().await? {
-        new_connection = true;
         peripheral.connect().await?;
     } else {
         println!("Bluetooth peripheral already connected");
@@ -129,7 +121,9 @@ pub(crate) async fn connect_to_robot(
     while pin.is_none() {
         println!("Please enter the PIN shown on the V5 brain");
         let mut str = String::new();
-        std::io::stdin().read_line(&mut str).expect("Failed to read stdin");
+        std::io::stdin()
+            .read_line(&mut str)
+            .expect("Failed to read stdin");
         if str.len() == 4 && u16::from_str(&str).is_ok() {
             pin = Some(parse_pin(str));
         }
@@ -148,17 +142,18 @@ pub(crate) async fn connect_to_robot(
         return Err(ConnectionError::InvalidPIN);
     }
 
-    Ok((peripheral, Characteristics {
-        tx_data,
-        rx_data,
-        tx_user,
-        rx_user,
-        code,
-    }))
+    Ok((
+        peripheral,
+        Characteristics {
+            tx_data,
+            rx_data,
+            tx_user,
+            rx_user,
+        },
+    ))
 }
 
 pub(crate) struct DualSubscribedBluetoothConnection {
-    tx_characteristic: Characteristic,
     rx_characteristic: Characteristic,
     read_buf: Arc<Mutex<Vec<u8>>>,
     peripheral: btleplug::platform::Peripheral,
@@ -188,7 +183,11 @@ impl DualSubscribedBluetoothConnection {
                 loop {
                     if let Some(val) = pin.next().await {
                         if val.uuid == characteristic1.uuid {
-                            println!("SUB: {:?} `{:?}`", &val.value, String::from_utf8_lossy(&val.value));
+                            println!(
+                                "SUB: {:?} `{:?}`",
+                                &val.value,
+                                String::from_utf8_lossy(&val.value)
+                            );
                             arc1.lock().await.extend_from_slice(&val.value[..]);
                         }
                     }
@@ -197,7 +196,6 @@ impl DualSubscribedBluetoothConnection {
         });
 
         DualSubscribedBluetoothConnection {
-            tx_characteristic,
             rx_characteristic,
             read_buf: arc,
             peripheral,
@@ -210,11 +208,16 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
     async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
         let mut chunks = buf.chunks_exact(244);
         for chunk in chunks.by_ref() {
-            println!("Write chunk: {:?}", chunk);
-            if let Err(err) = self.peripheral
+            // println!("Write chunk: {:?}", chunk);
+            if let Err(err) = self
+                .peripheral
                 .write(&self.rx_characteristic, chunk, WriteType::WithoutResponse)
-                .await {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+                .await
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ));
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
@@ -223,19 +226,25 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
 
         if !remainder.is_empty() {
             println!("write remainder {:?}", remainder);
-            if let Err(err) = self.peripheral.write(
-                &self.rx_characteristic,
-                &remainder,
-                WriteType::WithoutResponse,
-            ).await {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+            if let Err(err) = self
+                .peripheral
+                .write(
+                    &self.rx_characteristic,
+                    remainder,
+                    WriteType::WithoutResponse,
+                )
+                .await
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    err.to_string(),
+                ));
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
 
         Ok(())
     }
-
 
     async fn flush(&mut self) -> std::io::Result<()> {
         Ok(())

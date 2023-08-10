@@ -1,19 +1,33 @@
 use std::io::{Read, Write};
+use std::io::ErrorKind::WouldBlock;
 use std::time::Duration;
 
-use serialport::{DataBits, FlowControl, Parity, SerialPort, SerialPortType};
+use tokio_serial::{
+    DataBits, FlowControl, Parity, SerialPort, SerialPortBuilderExt, SerialPortType, SerialStream,
+};
 
 use crate::connection::SerialConnection;
 use crate::error::ConnectionError;
 
 pub struct SerialPortConnection {
-    serial_port: Box<dyn SerialPort>,
+    serial_port: SerialStream,
 }
 
 #[async_trait::async_trait]
-impl SerialConnection for SerialPortConnection { //fixme async
+impl SerialConnection for SerialPortConnection {
     async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.serial_port.write_all(buf)
+        loop {
+            self.serial_port.writable().await?;
+            match self.serial_port.write_all(buf) {
+                Ok(_) => break,
+                Err(err) => {
+                    if err.kind() != WouldBlock {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn flush(&mut self) -> std::io::Result<()> {
@@ -21,7 +35,18 @@ impl SerialConnection for SerialPortConnection { //fixme async
     }
 
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        self.serial_port.read_exact(buf)
+        loop {
+            self.serial_port.readable().await?;
+            match self.serial_port.read_exact(buf) {
+                Ok(_) => break,
+                Err(err) => {
+                    if err.kind() != WouldBlock {
+                        return Err(err);
+                    }
+                }
+            };
+        }
+        Ok(())
     }
 }
 
@@ -32,7 +57,7 @@ pub(crate) fn find_ports(_port: Option<String>) -> Result<(String, String), Conn
 
     let mut unknown = Vec::new();
 
-    for port in serialport::available_ports().expect("Failed to obtain list of ports!") {
+    for port in tokio_serial::available_ports().expect("Failed to obtain list of ports!") {
         if let SerialPortType::UsbPort(info) = &port.port_type {
             if info.pid == 0x0501 && info.vid == 0x2888 {
                 if let Some(product) = &info.product {
@@ -63,7 +88,7 @@ pub(crate) fn find_ports(_port: Option<String>) -> Result<(String, String), Conn
 }
 
 pub fn print_out_ports() {
-    for p in serialport::available_ports().expect("Failed to obtain list of ports!") {
+    for p in tokio_serial::available_ports().expect("Failed to obtain list of ports!") {
         if let SerialPortType::UsbPort(info) = p.port_type {
             if info.pid == 0x0501 && info.vid == 0x2888 {
                 println!(
@@ -81,15 +106,16 @@ pub fn print_out_ports() {
     }
 }
 
-pub(crate) fn open_connection(port: String) -> Result<SerialPortConnection, ConnectionError> {
-    let mut user = serialport::new(port, 115200)
+pub(crate) async fn open_connection(port: String) -> Result<SerialPortConnection, ConnectionError> {
+    let mut serial_port = tokio_serial::new(port, 115200)
         .parity(Parity::None)
         .data_bits(DataBits::Eight)
         .timeout(Duration::from_secs(5))
         .flow_control(FlowControl::None)
-        .open()
+        .open_native_async()
         .expect("Failed to connect to robot!");
 
-    user.write_data_terminal_ready(true).unwrap();
-    return Ok(SerialPortConnection { serial_port: user })
+    serial_port.write_data_terminal_ready(true).unwrap();
+    serial_port.set_exclusive(false).unwrap();
+    Ok(SerialPortConnection { serial_port })
 }

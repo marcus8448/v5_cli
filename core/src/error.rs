@@ -11,7 +11,7 @@ pub enum ConnectionError {
     #[error("bluetooth error")]
     BluetoothError(#[from] btleplug::Error),
     #[error("invalid PIN")]
-    InvalidPIN
+    InvalidPIN,
 }
 
 #[derive(Error, Debug)]
@@ -20,12 +20,12 @@ pub enum CommandError {
     InvalidSubcommand,
     #[error("missing argument `{0}`")]
     InvalidArgument(&'static str),
-    #[error("robot connection error")]
+    #[error("robot connection error: {0}")]
     ConnectionError(#[from] ConnectionError),
-    #[error("robot communications error")]
+    #[error("robot communications error: {0}")]
     CommunicationError(#[from] std::io::Error),
-    #[error("robot communications parsing error")]
-    ParseError(#[from] ParseError)
+    #[error("robot communications parsing error: {0}")]
+    ParseError(#[from] ParseError),
 }
 
 #[derive(Error, Debug)]
@@ -35,15 +35,13 @@ pub enum ParseError {
     #[error("invalid name `{0}`")]
     InvalidName(String),
     #[error("invalid id {0}")]
-    InvalidId(u32)
+    InvalidId(u32),
 }
 
 impl From<ParseError> for std::io::Error {
     fn from(value: ParseError) -> Self {
         match value {
-            ParseError::MissingKey(key) => {
-                std::io::Error::new(std::io::ErrorKind::NotFound, key)
-            }
+            ParseError::MissingKey(key) => std::io::Error::new(std::io::ErrorKind::NotFound, key),
             ParseError::InvalidName(name) => {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, name)
             }

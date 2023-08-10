@@ -88,21 +88,21 @@ async fn run() {
             } else {
                 let port: Option<&String> = root.get_one(PORT);
 
-                RobotConnectionOptions::Serial { port: port.cloned() }
+                RobotConnectionOptions::Serial {
+                    port: port.cloned(),
+                }
             };
 
             match registry.get(name).unwrap()(matches.clone(), options).await {
                 Ok(_) => {}
-                Err(err) => {
-                    match err {
-                        CommandError::InvalidSubcommand => {
-                            command.print_help().unwrap();
-                        }
-                        _ => {
-                            println!("{}", err);
-                        }
+                Err(err) => match err {
+                    CommandError::InvalidSubcommand => {
+                        command.print_help().unwrap();
                     }
-                }
+                    _ => {
+                        println!("{}", err);
+                    }
+                },
             };
         }
     }

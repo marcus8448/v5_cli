@@ -1,5 +1,3 @@
-use std::io;
-
 use crate::buffer::{ReadBuffer, WriteBuffer};
 use crate::error::ParseError;
 use crate::packet::Packet;
@@ -49,7 +47,7 @@ impl Packet<0x2E> for ManageCompetition {
         5
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
         buffer.write_u8(self.state.into());
         buffer.write_u8(0);
         buffer.write_u8(0);

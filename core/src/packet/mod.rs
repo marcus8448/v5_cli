@@ -34,7 +34,10 @@ pub trait Packet<const ID: u8>: Debug {
         len: usize,
     ) -> std::io::Result<Self::Response>;
 
-    async fn send(&mut self, connection: &mut Box<dyn SerialConnection + Send>) -> std::result::Result<Self::Response, std::io::Error> {
+    async fn send(
+        &mut self,
+        connection: &mut Box<dyn SerialConnection + Send>,
+    ) -> std::result::Result<Self::Response, std::io::Error> {
         dbg!(&self);
         let len = self.send_len();
         let mut buffer =

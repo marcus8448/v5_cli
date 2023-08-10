@@ -64,6 +64,16 @@ pub enum Product {
     Controller { has_robot: bool },
 }
 
+impl Display for Product {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Product::Brain => write!(f, "brain"),
+            Product::Controller { has_robot: true } => write!(f, "controller (connected)"),
+            Product::Controller { has_robot: false } => write!(f, "controller (disconnected)"),
+        }
+    }
+}
+
 impl Product {
     fn parse(id: u8, flag: u8) -> std::result::Result<Self, ParseError> {
         match id {
@@ -168,6 +178,16 @@ pub struct SystemVersion {
     a: u8,
     b: u8,
     product: Product,
+}
+
+impl Display for SystemVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}.{}.{}-{}.{} {}",
+            self.major, self.minor, self.patch, self.a, self.b, self.product
+        )
+    }
 }
 
 #[derive(Debug)]

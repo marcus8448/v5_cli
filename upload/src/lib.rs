@@ -1,4 +1,3 @@
-use std::io;
 use std::io::Read;
 use std::path::Path;
 use std::time::SystemTime;
@@ -53,7 +52,10 @@ impl Plugin for UploadPlugin {
     }
 
     fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
-        registry.insert(UPLOAD, Box::new(move |args, connection| Box::pin(upload_program(args, connection))));
+        registry.insert(
+            UPLOAD,
+            Box::new(move |args, connection| Box::pin(upload_program(args, connection))),
+        );
         command.subcommand(
             Command::new(UPLOAD)
                 .about("Uploads a program to the robot")
@@ -123,7 +125,10 @@ impl Plugin for UploadPlugin {
     }
 }
 
-async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Result<(), CommandError> {
+async fn upload_program(
+    args: ArgMatches,
+    options: RobotConnectionOptions,
+) -> Result<(), CommandError> {
     let program_name = args.get_one::<String>(NAME).unwrap();
     let description = args.get_one::<String>(DESCRIPTION).unwrap();
     let cold_package_path = args.get_one::<String>(COLD_PACKAGE).unwrap().clone();
@@ -152,7 +157,10 @@ async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Re
     let file_ini = format!("slot_{}.ini", index);
     let action = UploadAction::try_from(action.as_str()).unwrap();
 
-    let brain = tokio::task::spawn(v5_core::connection::connect(RobotConnectionType::System, options));
+    let brain = tokio::task::spawn(v5_core::connection::connect(
+        RobotConnectionType::System,
+        options,
+    ));
     let cold_handle = tokio::task::spawn(load_compressed(cold_package_path)); //probably overkill
     let hot_handle = tokio::task::spawn(load_compressed(hot_package_path));
 
@@ -165,7 +173,8 @@ async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Re
         "USER902x.bmp",
         description,
         timestamp,
-    ).await;
+    )
+    .await;
     println!("{}", String::from_utf8(ini.clone()).unwrap());
 
     let cold_package = cold_handle.await.unwrap()?;
@@ -178,8 +187,9 @@ async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Re
     let mut skip_cold = false;
 
     let mut brain = brain.await.unwrap()?;
-    let available_package =
-        GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name).send(&mut brain).await;
+    let available_package = GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name)
+        .send(&mut brain)
+        .await;
 
     if let Ok(package) = &available_package {
         if package.size == cold_len as u32 && package.crc == crc {
@@ -204,7 +214,8 @@ async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Re
             timestamp,
             None,
             UploadAction::Nothing,
-        ).await?;
+        )
+        .await?;
     }
 
     let hot_package = hot_handle.await.unwrap()?;
@@ -222,7 +233,8 @@ async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Re
         timestamp,
         Some((cold_package_name, Vid::Pros)),
         UploadAction::Nothing,
-    ).await?;
+    )
+    .await?;
 
     let conf = ini;
     let crc = CRC32.checksum(&conf);
@@ -239,17 +251,17 @@ async fn upload_program(args: ArgMatches, options: RobotConnectionOptions) -> Re
         timestamp,
         None,
         action,
-    ).await?;
+    )
+    .await?;
     Ok(())
 }
 
-async fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, io::Error> {
+async fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, std::io::Error> {
     let mut file = std::fs::File::open(path)?;
     let len = usize::try_from(file.metadata().unwrap().len()).expect("file too large");
     let mut compressor = Compressor::new(CompressionLvl::best());
     let max_len = compressor.gzip_compress_bound(len);
-    let mut compressed_data = Vec::with_capacity(max_len);
-    compressed_data.resize(max_len, 0);
+    let mut compressed_data = vec![0; max_len];
     let mut input = Vec::with_capacity(len);
     file.read_to_end(&mut input).expect("failed to read input");
     let size = compressor
@@ -286,7 +298,8 @@ async fn upload_file(
         remote_name,
         timestamp,
     )
-    .send(brain).await?;
+    .send(brain)
+    .await?;
     assert!(meta.file_size >= file.len() as u32);
     if let Some((name, vid)) = linked_file {
         SetFileTransferLink::new(name, vid).send(brain).await?;
@@ -295,7 +308,9 @@ async fn upload_file(
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);
-        FileTransferWrite::new(&file[i..end], address + i as u32).send(brain).await?;
+        FileTransferWrite::new(&file[i..end], address + i as u32)
+            .send(brain)
+            .await?;
     }
     FileTransferComplete::new(action).send(brain).await?;
     Ok(())

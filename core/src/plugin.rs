@@ -16,7 +16,11 @@ static mut EXTERNAL_LIBRARIES: Vec<Library> = Vec::new(); // We DO NOT want to d
 pub const PORT: &str = "port";
 
 pub type CommandRegistry = HashMap<&'static str, Box<ExecutableCommand>>;
-pub type ExecutableCommand = fn(ArgMatches, RobotConnectionOptions) -> Pin<Box<dyn Future<Output = Result<(), crate::error::CommandError>>>>;
+pub type ExecutableCommand =
+    fn(
+        ArgMatches,
+        RobotConnectionOptions,
+    ) -> Pin<Box<dyn Future<Output = Result<(), crate::error::CommandError>>>>;
 
 #[macro_export]
 macro_rules! export_plugin {
