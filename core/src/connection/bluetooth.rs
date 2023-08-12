@@ -1,7 +1,9 @@
+use std::cell::Cell;
 use std::convert::TryInto;
+use std::ops::Sub;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use btleplug::api::{
@@ -24,6 +26,8 @@ const CHARACTERISTIC_TX_USER: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_7
 const CHARACTERISTIC_RX_USER: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb1326); // WRITE_WITHOUT_RESPONSE | WRITE | NOTIFY
 
 const CHARACTERISTIC_CODE: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13e5); // READ | WRITE_WITHOUT_RESPONSE | WRITE
+
+const WRITE_TIME: Duration = Duration::from_millis(25);
 
 pub(crate) struct Characteristics {
     pub(crate) tx_data: Characteristic,
@@ -154,6 +158,7 @@ pub(crate) async fn connect_to_robot(
 }
 
 pub(crate) struct DualSubscribedBluetoothConnection {
+    send_timer: Mutex<Cell<SystemTime>>,
     rx_characteristic: Characteristic,
     read_buf: Arc<Mutex<Vec<u8>>>,
     peripheral: btleplug::platform::Peripheral,
@@ -169,11 +174,14 @@ impl DualSubscribedBluetoothConnection {
 
         let arc1 = arc.clone();
         let peripheral1 = peripheral.clone();
-        let characteristic1 = tx_characteristic.clone();
-        peripheral1
+        let res = peripheral
             .subscribe(&tx_characteristic)
-            .await
-            .expect("Sub");
+            .await;
+
+        if cfg!(not(windows)) {
+            res.unwrap();
+        }
+
         tokio::spawn(async move {
             loop {
                 let mut pin = peripheral1
@@ -182,13 +190,16 @@ impl DualSubscribedBluetoothConnection {
                     .expect("Failed to listen to notifications");
                 loop {
                     if let Some(val) = pin.next().await {
-                        if val.uuid == characteristic1.uuid {
-                            println!(
-                                "SUB: {:?} `{:?}`",
-                                &val.value,
-                                String::from_utf8_lossy(&val.value)
-                            );
-                            arc1.lock().await.extend_from_slice(&val.value[..]);
+                        if val.uuid == tx_characteristic.uuid {
+                            // println!(
+                            //     "SUB: {:?} `{:?}`",
+                            //     &val.value,
+                            //     String::from_utf8_lossy(&val.value)
+                            // );
+                            println!("rec");
+                            arc1.lock().await.extend(val.value);
+                        } else {
+                            dbg!(val);
                         }
                     }
                 }
@@ -196,6 +207,7 @@ impl DualSubscribedBluetoothConnection {
         });
 
         DualSubscribedBluetoothConnection {
+            send_timer: Mutex::new(Cell::new(SystemTime::now())),
             rx_characteristic,
             read_buf: arc,
             peripheral,
@@ -206,8 +218,15 @@ impl DualSubscribedBluetoothConnection {
 #[async_trait]
 impl SerialConnection for DualSubscribedBluetoothConnection {
     async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        let mut guard = self.send_timer.lock().await;
         let mut chunks = buf.chunks_exact(244);
         for chunk in chunks.by_ref() {
+            print!("C");
+            let time2 = guard.get();
+            if let Some(duration) = WRITE_TIME.checked_sub(SystemTime::now().duration_since(time2).expect("time ran backwards")) {
+                tokio::time::sleep(duration).await;
+            }
+            guard.set(SystemTime::now());
             // println!("Write chunk: {:?}", chunk);
             if let Err(err) = self
                 .peripheral
@@ -219,19 +238,24 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
                     err.to_string(),
                 ));
             }
-            tokio::time::sleep(Duration::from_millis(40)).await;
         }
 
         let remainder = chunks.remainder();
 
         if !remainder.is_empty() {
-            println!("write remainder {:?}", remainder);
+            let time1 = guard.get();
+            if let Some(duration) = WRITE_TIME.checked_sub(SystemTime::now().duration_since(time1).expect("time ran backwards")) {
+                tokio::time::sleep(duration).await;
+            }
+            guard.set(SystemTime::now());
+            drop(guard);
+            println!("R {}", remainder.len());
             if let Err(err) = self
                 .peripheral
                 .write(
                     &self.rx_characteristic,
                     remainder,
-                    WriteType::WithoutResponse,
+                    WriteType::WithResponse,
                 )
                 .await
             {
@@ -240,13 +264,22 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
                     err.to_string(),
                 ));
             }
-            tokio::time::sleep(Duration::from_millis(40)).await;
         }
 
         Ok(())
     }
 
     async fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn clear(&mut self) -> std::io::Result<()> {
+        let mut guard = self.read_buf.lock().await;
+        if !guard.is_empty() {
+            println!("cleared");
+            guard.clear();
+        }
+
         Ok(())
     }
 
@@ -264,10 +297,10 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
             } {
                 0 => {
                     fail += 1;
-                    if fail >= 5000 / 50 {
+                    if fail >= 1000 / 10 {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
                 n => {
                     let tmp = buf;
@@ -282,6 +315,15 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
             ))
         } else {
             Ok(())
+        }
+    }
+
+    async fn try_read_one(&mut self) -> std::io::Result<u8> {
+        let mut guard = self.read_buf.lock().await;
+        return if !guard.is_empty() {
+            Ok(guard.remove(0))
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof"))
         }
     }
 }

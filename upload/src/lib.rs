@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::AtomicU16;
 use std::time::SystemTime;
 
 use base64::Engine;
@@ -304,7 +305,7 @@ async fn upload_file(
     if let Some((name, vid)) = linked_file {
         SetFileTransferLink::new(name, vid).send(brain).await?;
     }
-    let max_packet_size = meta.max_packet_size / 2;
+    let max_packet_size = (((meta.max_packet_size / 2) / 240) * 240) - 14;
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);

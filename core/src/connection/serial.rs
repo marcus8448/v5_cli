@@ -1,3 +1,4 @@
+use std::fs::read;
 use std::io::{Read, Write};
 use std::io::ErrorKind::WouldBlock;
 use std::time::Duration;
@@ -17,12 +18,16 @@ pub struct SerialPortConnection {
 impl SerialConnection for SerialPortConnection {
     async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
         loop {
+            #[cfg(not(windows))]
             self.serial_port.writable().await?;
             match self.serial_port.write_all(buf) {
                 Ok(_) => break,
                 Err(err) => {
                     if err.kind() != WouldBlock {
                         return Err(err);
+                    } else {
+                        #[cfg(windows)]
+                        tokio::time::sleep(Duration::from_millis(1)).await;
                     }
                 }
             }
@@ -34,19 +39,48 @@ impl SerialConnection for SerialPortConnection {
         self.serial_port.flush()
     }
 
+    async fn clear(&mut self) -> std::io::Result<()> {
+        let _ = self.serial_port.read_to_end(&mut Vec::<u8>::new());
+        Ok(())
+    }
+
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         loop {
+            #[cfg(not(windows))]
             self.serial_port.readable().await?;
             match self.serial_port.read_exact(buf) {
-                Ok(_) => break,
+                Ok(_) => return Ok(()),
                 Err(err) => {
                     if err.kind() != WouldBlock {
                         return Err(err);
+                    } else {
+                        #[cfg(windows)]
+                        tokio::time::sleep(Duration::from_millis(1)).await;
                     }
                 }
             };
         }
-        Ok(())
+    }
+
+    async fn try_read_one(&mut self) -> std::io::Result<u8> {
+        let mut buf = [0_u8; 1];
+        loop {
+            #[cfg(not(windows))]
+            self.serial_port.readable().await?;
+
+            match self.serial_port.try_read(&mut buf) {
+                Ok(1) => return Ok(buf[0]),
+                Ok(_) => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof")),
+                Err(err) => {
+                    if err.kind() != WouldBlock {
+                        return Err(err);
+                    } else {
+                        #[cfg(windows)]
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }
+            };
+        }
     }
 }
 
@@ -116,6 +150,7 @@ pub(crate) async fn open_connection(port: String) -> Result<SerialPortConnection
         .expect("Failed to connect to robot!");
 
     serial_port.write_data_terminal_ready(true).unwrap();
+    #[cfg(unix)]
     serial_port.set_exclusive(false).unwrap();
     Ok(SerialPortConnection { serial_port })
 }

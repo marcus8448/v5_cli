@@ -1,3 +1,5 @@
+use std::io::ErrorKind::WouldBlock;
+use std::time::Duration;
 use crate::connection::bluetooth::DualSubscribedBluetoothConnection;
 
 pub mod bluetooth;
@@ -65,5 +67,7 @@ pub trait SerialConnection {
     async fn write(&mut self, buf: &[u8]) -> std::io::Result<()>;
     async fn flush(&mut self) -> std::io::Result<()>;
 
+    async fn clear(&mut self) -> std::io::Result<()>;
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
+    async fn try_read_one(&mut self) -> std::io::Result<u8>;
 }

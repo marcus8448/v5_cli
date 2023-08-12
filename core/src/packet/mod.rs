@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 use std::mem::size_of;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::time::{Duration, SystemTime};
 
 use crc::{Crc, CRC_16_XMODEM};
 
@@ -15,6 +17,7 @@ pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 const EXT_PACKET_ID: u8 = 0x56;
+static PACKETS_LOST: AtomicU16 = AtomicU16::new(0);
 
 #[async_trait::async_trait]
 pub trait Packet<const ID: u8>: Debug {
@@ -69,24 +72,41 @@ pub trait Packet<const ID: u8>: Debug {
         }
 
         // println!("sending: {:02X?}", &buffer);
+        connection.clear().await?;
         connection.write(&buffer).await?;
         connection.flush().await?;
 
-        let mut buf = [0_u8; 1];
-
+        let mut value = 0;
+        let mut i = 0;
+        let time = SystemTime::now();
         loop {
-            println!("Searching for header");
-            connection.read(&mut buf).await?;
+            if value == RESPONSE_HEADER[i] {
+                i += 1;
+                if i == RESPONSE_HEADER.len() {
+                    break
+                }
+            } else if i > 0 {
+                i = 0;
+                continue
+            }
 
-            if buf[0] != RESPONSE_HEADER[0] {
-                continue;
+            match connection.try_read_one().await {
+                Ok(v) => value = v,
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    value = 0;
+                    let mut dur = Duration::from_millis(300);
+                    if ID == 0x12 {
+                        dur = Duration::from_millis(2000);
+                    }
+                    if SystemTime::now().duration_since(time).expect("time ran backwards") > dur {
+                        println!("resending ----------------------------------- {}", PACKETS_LOST.fetch_add(1, Ordering::Relaxed) + 1);
+                        return self.send(connection).await;
+                    }
+                }
             }
-            connection.read(&mut buf).await?;
-            if buf[0] != RESPONSE_HEADER[1] {
-                continue;
-            }
-            break;
         }
+        println!("{}ms", SystemTime::now().duration_since(time).unwrap().as_millis());
 
         let mut payload = Vec::with_capacity(64);
         payload.extend_from_slice(&RESPONSE_HEADER);
@@ -100,9 +120,9 @@ pub trait Packet<const ID: u8>: Debug {
         payload.extend_from_slice(&metadata);
 
         if !Self::is_simple() && len & 0x80 != 0 {
-            connection.read(&mut buf).await?;
-            len = ((len & 0x7f) << 8) + buf[0] as usize;
-            payload.push(buf[0]);
+            let val = connection.try_read_one().await?;
+            len = ((len & 0x7f) << 8) + val as usize;
+            payload.push(val);
         }
 
         let start = payload.len();
