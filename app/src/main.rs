@@ -3,7 +3,11 @@ use std::sync::OnceLock;
 use v5_core::clap::{Arg, ArgAction, Command};
 use v5_core::connection::RobotConnectionOptions;
 use v5_core::error::CommandError;
-use v5_core::plugin::Plugin;
+
+mod competition;
+mod manage;
+mod terminal;
+mod upload;
 
 const PORT: &str = "port";
 const BLUETOOTH: &str = "bluetooth";
@@ -14,6 +18,8 @@ const VERBOSE: &str = "verbose";
 pub static BASE_COMMAND: OnceLock<Command> = OnceLock::new();
 
 fn main() {
+    env_logger::init();
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -58,17 +64,12 @@ async fn run() {
                 .short('v')
                 .global(false)
                 .action(ArgAction::SetTrue),
-        );
+        )
+        .subcommand(competition::command())
+        .subcommand(manage::command())
+        .subcommand(terminal::command())
+        .subcommand(upload::command());
 
-    unsafe {
-        v5_core::plugin::DEFAULT_PLUGIN_REF = Some(Box::new(register_default_plugins));
-    }
-
-    let plugins = v5_core::plugin::load_plugins();
-    let mut registry = v5_core::plugin::CommandRegistry::new();
-    for plugin in plugins {
-        command = plugin.create_commands(command, &mut registry);
-    }
 
     BASE_COMMAND.set(command.clone()).unwrap();
     let root = command.get_matches_mut();
@@ -93,7 +94,24 @@ async fn run() {
                 }
             };
 
-            match registry.get(name).unwrap()(matches.clone(), options).await {
+            match match name {
+                competition::COMMAND => {
+                    competition::competition(matches.clone(), options).await
+                }
+                manage::COMMAND => {
+                    manage::manage(matches.clone(), options).await
+                }
+                terminal::COMMAND => {
+                    terminal::terminal(matches.clone(), options).await
+                }
+                upload::COMMAND => {
+                    upload::upload(matches.clone(), options).await
+                }
+                &_ => {
+                    command.print_help().unwrap();
+                    return;
+                }
+            } {
                 Ok(_) => {}
                 Err(err) => match err {
                     CommandError::InvalidSubcommand => {
@@ -106,10 +124,4 @@ async fn run() {
             };
         }
     }
-}
-
-#[no_mangle]
-unsafe extern "C" fn register_default_plugins(plugins: &mut Vec<Box<dyn Plugin>>) {
-    plugins.push(Box::new(v5_upload::UploadPlugin {}));
-    plugins.push(Box::new(v5_manage::ManagePlugin {}));
 }

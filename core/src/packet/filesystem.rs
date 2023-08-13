@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-use crate::buffer::{ReadBuffer, WriteBuffer};
+use crate::buffer::{RawRead, RawWrite};
 use crate::error::ParseError;
 use crate::packet::Packet;
 use crate::packet::system::{Channel, convert_from_vex_timestamp, convert_to_vex_timestamp};
@@ -205,7 +205,7 @@ impl Packet<0x10> for FileTransferChannel {
         2
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(1);
         buffer.write_u8(self.channel.into());
         Ok(())
@@ -213,7 +213,7 @@ impl Packet<0x10> for FileTransferChannel {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -272,7 +272,7 @@ impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
         size_of::<u8>() * 4 + size_of::<u32>() * 3 + 4 + size_of::<u32>() * 2 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.direction.into());
         buffer.write_u8(self.target.into());
         buffer.write_u8(self.vid.into());
@@ -289,7 +289,7 @@ impl<'a> Packet<0x11> for FileTransferInitialize<'a> {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(UploadParameters {
@@ -318,14 +318,14 @@ impl Packet<0x12> for FileTransferComplete {
         1
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.upload_action.into());
         Ok(())
     }
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -362,7 +362,7 @@ impl<'a> Packet<0x13> for FileTransferWrite<'a> {
             }
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u32(self.address);
         buffer.write_raw(self.slice);
         if self.slice.len() % 4 != 0 {
@@ -373,7 +373,7 @@ impl<'a> Packet<0x13> for FileTransferWrite<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -399,7 +399,7 @@ impl Packet<0x14> for FileTransferRead {
         size_of::<u32>() + size_of::<u16>()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u32(self.address);
         buffer.write_u16(self.len);
         Ok(())
@@ -407,7 +407,7 @@ impl Packet<0x14> for FileTransferRead {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         let mut vec = vec![0_u8; self.len as usize];
@@ -435,7 +435,7 @@ impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(0);
         buffer.write_str(self.name, 24);
@@ -444,7 +444,7 @@ impl<'a> Packet<0x15> for SetFileTransferLink<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -470,7 +470,7 @@ impl Packet<0x16> for GetDirectoryCount {
         size_of::<u8>() + size_of::<u8>()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.option);
         Ok(())
@@ -478,7 +478,7 @@ impl Packet<0x16> for GetDirectoryCount {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(buffer.read_u16())
@@ -504,7 +504,7 @@ impl Packet<0x17> for GetFileMetadataByIndex {
         size_of::<u8>() + size_of::<u8>()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.index);
         buffer.write_u8(self.option);
         Ok(())
@@ -512,7 +512,7 @@ impl Packet<0x17> for GetFileMetadataByIndex {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(FileMetadata {
@@ -552,7 +552,7 @@ impl<'a> Packet<0x19> for GetFileMetadataByName<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.option);
         buffer.write_str(self.file_name, 24);
@@ -561,7 +561,7 @@ impl<'a> Packet<0x19> for GetFileMetadataByName<'a> {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(FileMetadata {
@@ -617,7 +617,7 @@ impl<'a> Packet<0x1A> for SetProgramFileMetadata<'a> {
         0
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.options);
         buffer.write_u32(self.address);
@@ -631,7 +631,7 @@ impl<'a> Packet<0x1A> for SetProgramFileMetadata<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -663,7 +663,7 @@ impl<'a> Packet<0x1B> for DeleteFile<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(if self.erase_all { 0x80 } else { 0 });
         buffer.write_str(self.file_name, 24);
@@ -673,7 +673,7 @@ impl<'a> Packet<0x1B> for DeleteFile<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -704,7 +704,7 @@ impl<'a> Packet<0x1C> for GetProgramFileSlot<'a> {
         0
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.options);
         buffer.write_str(self.file_name, 24);
@@ -714,7 +714,7 @@ impl<'a> Packet<0x1C> for GetProgramFileSlot<'a> {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(buffer.read_u8())

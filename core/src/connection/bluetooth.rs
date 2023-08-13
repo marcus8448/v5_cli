@@ -54,6 +54,7 @@ pub(crate) async fn connect_to_robot(
     let adapter = &adapters[0];
 
     let mut events = adapter.events().await?;
+    let t = SystemTime::now();
     adapter.start_scan(ScanFilter::default()).await?;
 
     let mut device: Option<btleplug::platform::Peripheral> = None;
@@ -76,6 +77,13 @@ pub(crate) async fn connect_to_robot(
             break;
         }
     }
+    println!(
+        "device search took {}ms",
+        SystemTime::now()
+            .duration_since(t)
+            .expect("time ran backwards")
+            .as_millis()
+    );
 
     if device.is_none() {
         return Err(ConnectionError::DeviceNotFound);
@@ -174,9 +182,7 @@ impl DualSubscribedBluetoothConnection {
 
         let arc1 = arc.clone();
         let peripheral1 = peripheral.clone();
-        let res = peripheral
-            .subscribe(&tx_characteristic)
-            .await;
+        let res = peripheral.subscribe(&tx_characteristic).await;
 
         if cfg!(not(windows)) {
             res.unwrap();
@@ -207,7 +213,7 @@ impl DualSubscribedBluetoothConnection {
         });
 
         DualSubscribedBluetoothConnection {
-            send_timer: Mutex::new(Cell::new(SystemTime::now())),
+            send_timer: Mutex::new(Cell::new(SystemTime::now().sub(Duration::from_secs(1)))),
             rx_characteristic,
             read_buf: arc,
             peripheral,
@@ -218,12 +224,17 @@ impl DualSubscribedBluetoothConnection {
 #[async_trait]
 impl SerialConnection for DualSubscribedBluetoothConnection {
     async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        let mut guard = self.send_timer.lock().await;
+        let t = SystemTime::now();
+        let guard = self.send_timer.lock().await;
         let mut chunks = buf.chunks_exact(244);
         for chunk in chunks.by_ref() {
             print!("C");
             let time2 = guard.get();
-            if let Some(duration) = WRITE_TIME.checked_sub(SystemTime::now().duration_since(time2).expect("time ran backwards")) {
+            if let Some(duration) = WRITE_TIME.checked_sub(
+                SystemTime::now()
+                    .duration_since(time2)
+                    .expect("time ran backwards"),
+            ) {
                 tokio::time::sleep(duration).await;
             }
             guard.set(SystemTime::now());
@@ -244,7 +255,11 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
 
         if !remainder.is_empty() {
             let time1 = guard.get();
-            if let Some(duration) = WRITE_TIME.checked_sub(SystemTime::now().duration_since(time1).expect("time ran backwards")) {
+            if let Some(duration) = WRITE_TIME.checked_sub(
+                SystemTime::now()
+                    .duration_since(time1)
+                    .expect("time ran backwards"),
+            ) {
                 tokio::time::sleep(duration).await;
             }
             guard.set(SystemTime::now());
@@ -252,11 +267,7 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
             println!("R {}", remainder.len());
             if let Err(err) = self
                 .peripheral
-                .write(
-                    &self.rx_characteristic,
-                    remainder,
-                    WriteType::WithResponse,
-                )
+                .write(&self.rx_characteristic, remainder, WriteType::WithResponse)
                 .await
             {
                 return Err(std::io::Error::new(
@@ -265,6 +276,14 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
                 ));
             }
         }
+
+        println!(
+            "write took {}ms",
+            SystemTime::now()
+                .duration_since(t)
+                .expect("time ran backwards")
+                .as_millis()
+        );
 
         Ok(())
     }
@@ -323,8 +342,11 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
         return if !guard.is_empty() {
             Ok(guard.remove(0))
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof"))
-        }
+            Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "eof",
+            ))
+        };
     }
 }
 

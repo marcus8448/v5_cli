@@ -1,6 +1,5 @@
 use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::AtomicU16;
 use std::time::SystemTime;
 
 use base64::Engine;
@@ -9,7 +8,7 @@ use libdeflater::{CompressionLvl, Compressor};
 
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::connection::{RobotConnectionOptions, RobotConnectionType, SerialConnection};
+use v5_core::connection::{Brain, RobotConnectionOptions, RobotConnectionType};
 use v5_core::crc::{Algorithm, Crc};
 use v5_core::error::CommandError;
 use v5_core::log::info;
@@ -18,12 +17,9 @@ use v5_core::packet::filesystem::{
     GetFileMetadataByName, SetFileTransferLink, TransferDirection, TransferTarget, UploadAction,
     Vid,
 };
-use v5_core::packet::Packet;
-use v5_core::plugin::{CommandRegistry, Plugin};
 use v5_core::time::format_description::well_known::Rfc3339;
 use v5_core::time::OffsetDateTime;
 
-// export_plugin!(Box::new(UploadPlugin::default()));
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm {
     width: 32,
     poly: 0x04C11DB7,
@@ -35,7 +31,7 @@ pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm {
     residue: 0,
 });
 
-const UPLOAD: &str = "upload";
+pub(crate) const COMMAND: &str = "upload";
 const COLD_PACKAGE: &str = "cold";
 const HOT_PACKAGE: &str = "hot";
 const COLD_ADDRESS: &str = "cold-address";
@@ -44,89 +40,74 @@ const NAME: &str = "name";
 const DESCRIPTION: &str = "description";
 const INDEX: &str = "index";
 const ACTION: &str = "action";
-
-pub struct UploadPlugin {}
-
-impl Plugin for UploadPlugin {
-    fn get_name(&self) -> &'static str {
-        UPLOAD
-    }
-
-    fn create_commands(&self, command: Command, registry: &mut CommandRegistry) -> Command {
-        registry.insert(
-            UPLOAD,
-            Box::new(move |args, connection| Box::pin(upload_program(args, connection))),
-        );
-        command.subcommand(
-            Command::new(UPLOAD)
-                .about("Uploads a program to the robot")
-                .arg(
-                    Arg::new(COLD_PACKAGE)
-                        .short('c')
-                        .help("Location of the cold package binary")
-                        .default_value("bin/cold.package.bin")
-                        .value_hint(ValueHint::FilePath)
-                        .value_parser(NonEmptyStringValueParser::new())
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(HOT_PACKAGE)
-                        .short('t')
-                        .help("Location of the hot package binary")
-                        .default_value("bin/hot.package.bin")
-                        .value_hint(ValueHint::FilePath)
-                        .value_parser(NonEmptyStringValueParser::new())
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(COLD_ADDRESS)
-                        .help("Starting memory address of the cold package binary")
-                        .default_value("0x03800000")
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(HOT_ADDRESS)
-                        .help("Starting memory address of the hot package binary")
-                        .default_value("0x07800000")
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(NAME)
-                        .short('n')
-                        .help("Name of the program when uploading")
-                        .default_value("Program")
-                        .value_parser(NonEmptyStringValueParser::new())
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(DESCRIPTION)
-                        .short('d')
-                        .help("Description of the program when uploading")
-                        .default_value("???")
-                        .value_parser(NonEmptyStringValueParser::new())
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(INDEX)
-                        .short('i')
-                        .help("What slot to install the program into (1-8)")
-                        .value_parser(value_parser!(u8).range(1..=8))
-                        .default_value("1")
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new(ACTION)
-                        .short('a')
-                        .help("What to do after uploading the program")
-                        .value_parser(["nothing", "run", "screen"])
-                        .default_value("screen")
-                        .action(ArgAction::Set),
-                ),
+pub(crate) fn command() -> Command {
+    Command::new(COMMAND)
+        .about("Uploads a program to the robot")
+        .arg(
+            Arg::new(COLD_PACKAGE)
+                .short('c')
+                .help("Location of the cold package binary")
+                .default_value("bin/cold.package.bin")
+                .value_hint(ValueHint::FilePath)
+                .value_parser(NonEmptyStringValueParser::new())
+                .action(ArgAction::Set),
         )
-    }
+        .arg(
+            Arg::new(HOT_PACKAGE)
+                .short('t')
+                .help("Location of the hot package binary")
+                .default_value("bin/hot.package.bin")
+                .value_hint(ValueHint::FilePath)
+                .value_parser(NonEmptyStringValueParser::new())
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new(COLD_ADDRESS)
+                .help("Starting memory address of the cold package binary")
+                .default_value("0x03800000")
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new(HOT_ADDRESS)
+                .help("Starting memory address of the hot package binary")
+                .default_value("0x07800000")
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new(NAME)
+                .short('n')
+                .help("Name of the program when uploading")
+                .default_value("Program")
+                .value_parser(NonEmptyStringValueParser::new())
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new(DESCRIPTION)
+                .short('d')
+                .help("Description of the program when uploading")
+                .default_value("???")
+                .value_parser(NonEmptyStringValueParser::new())
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new(INDEX)
+                .short('i')
+                .help("What slot to install the program into (1-8)")
+                .value_parser(value_parser!(u8).range(1..=8))
+                .default_value("1")
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new(ACTION)
+                .short('a')
+                .help("What to do after uploading the program")
+                .value_parser(["nothing", "run", "screen"])
+                .default_value("screen")
+                .action(ArgAction::Set),
+        )
 }
 
-async fn upload_program(
+pub(crate) async fn upload(
     args: ArgMatches,
     options: RobotConnectionOptions,
 ) -> Result<(), CommandError> {
@@ -188,9 +169,7 @@ async fn upload_program(
     let mut skip_cold = false;
 
     let mut brain = brain.await.unwrap()?;
-    let available_package = GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name)
-        .send(&mut brain)
-        .await;
+    let available_package = brain.send(&mut GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name)).await;
 
     if let Ok(package) = &available_package {
         if package.size == cold_len as u32 && package.crc == crc {
@@ -273,7 +252,7 @@ async fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, std::io::Er
 }
 
 async fn upload_file(
-    brain: &mut Box<dyn SerialConnection + Send>,
+    brain: &mut Brain,
     target: TransferTarget,
     file_type: FileType,
     vid: Vid,
@@ -286,7 +265,7 @@ async fn upload_file(
     linked_file: Option<(&str, Vid)>,
     action: UploadAction,
 ) -> Result<(), CommandError> {
-    let meta = FileTransferInitialize::new(
+    let meta = brain.send(&mut FileTransferInitialize::new(
         TransferDirection::Upload,
         target,
         vid,
@@ -298,22 +277,20 @@ async fn upload_file(
         file_type,
         remote_name,
         timestamp,
-    )
-    .send(brain)
+    ))
     .await?;
     assert!(meta.file_size >= file.len() as u32);
     if let Some((name, vid)) = linked_file {
-        SetFileTransferLink::new(name, vid).send(brain).await?;
+        brain.send(&mut SetFileTransferLink::new(name, vid)).await?;
     }
-    let max_packet_size = (((meta.max_packet_size / 2) / 240) * 240) - 14;
+    let max_packet_size = (((meta.max_packet_size / 2) / 244) * 244) - 14;
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);
-        FileTransferWrite::new(&file[i..end], address + i as u32)
-            .send(brain)
+        brain.send(&mut FileTransferWrite::new(&file[i..end], address + i as u32))
             .await?;
     }
-    FileTransferComplete::new(action).send(brain).await?;
+    brain.send(&mut FileTransferComplete::new(action)).await?;
     Ok(())
 }
 

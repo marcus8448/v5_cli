@@ -1,7 +1,7 @@
 use std::ffi::CStr;
 use std::mem::size_of;
 
-pub trait WriteBuffer {
+pub trait RawWrite {
     fn write_u8(&mut self, value: u8);
     fn write_i8(&mut self, value: i8);
 
@@ -29,7 +29,7 @@ pub trait WriteBuffer {
     fn get_data(self) -> Box<[u8]>;
 }
 
-pub trait ReadBuffer {
+pub trait RawRead {
     fn read_u8(&mut self) -> u8;
     fn read_i8(&mut self) -> i8;
 
@@ -70,7 +70,7 @@ impl<'a> FixedReadBuffer<'a> {
     }
 }
 
-impl<'a> ReadBuffer for FixedReadBuffer<'a> {
+impl<'a> RawRead for FixedReadBuffer<'a> {
     fn read_u8(&mut self) -> u8 {
         let out = u8::from_le_bytes(
             self.data[self.pos..self.pos + size_of::<u8>()]
@@ -217,7 +217,7 @@ impl<'a> ReadBuffer for FixedReadBuffer<'a> {
     }
 }
 
-impl WriteBuffer for Vec<u8> {
+impl RawWrite for Vec<u8> {
     fn write_u8(&mut self, value: u8) {
         self.extend_from_slice(&value.to_le_bytes());
     }

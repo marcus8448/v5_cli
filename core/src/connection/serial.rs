@@ -1,4 +1,3 @@
-use std::fs::read;
 use std::io::{Read, Write};
 use std::io::ErrorKind::WouldBlock;
 use std::time::Duration;
@@ -70,7 +69,12 @@ impl SerialConnection for SerialPortConnection {
 
             match self.serial_port.try_read(&mut buf) {
                 Ok(1) => return Ok(buf[0]),
-                Ok(_) => return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof")),
+                Ok(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "eof",
+                    ))
+                }
                 Err(err) => {
                     if err.kind() != WouldBlock {
                         return Err(err);

@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::ops::Add;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::buffer::{ReadBuffer, WriteBuffer};
+use crate::buffer::{RawRead, RawWrite};
 use crate::error::ParseError;
 use crate::packet::filesystem::Vid;
 use crate::packet::Packet;
@@ -147,17 +147,17 @@ impl Packet<0xA4> for GetSystemVersion {
         0
     }
 
-    fn is_simple() -> bool {
+    fn is_simple(&self) -> bool {
         true
     }
 
-    fn write_buffer(&self, _: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, _: &mut dyn RawWrite) -> std::io::Result<()> {
         Ok(())
     }
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(SystemVersion {
@@ -214,7 +214,7 @@ impl<'a> Packet<0x18> for ExecuteProgram<'a> {
         1 + 1 + 24
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.vid.into());
         buffer.write_u8(self.options);
         buffer.write_str(self.filename, 24);
@@ -223,7 +223,7 @@ impl<'a> Packet<0x18> for ExecuteProgram<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -246,17 +246,17 @@ impl Packet<0x21> for GetProduct {
         0
     }
 
-    fn is_simple() -> bool {
+    fn is_simple(&self) -> bool {
         true
     }
 
-    fn write_buffer(&self, _: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, _: &mut dyn RawWrite) -> std::io::Result<()> {
         Ok(())
     }
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(Box::from(buffer.get_all()))
@@ -296,13 +296,13 @@ impl Packet<0x22> for GetSystemStatus {
         0
     }
 
-    fn write_buffer(&self, _: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, _: &mut dyn RawWrite) -> std::io::Result<()> {
         Ok(())
     }
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         buffer.skip(1);
@@ -352,7 +352,7 @@ impl<'a> Packet<0x27> for SendUserCommunications<'a> {
         1 + 1 + self.payload.len()
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.channel.into());
         buffer.write_u8(0);
         buffer.write_raw(self.payload);
@@ -362,7 +362,7 @@ impl<'a> Packet<0x27> for SendUserCommunications<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
@@ -388,7 +388,7 @@ impl Packet<0x27> for ReadUserCommunications {
         2
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         buffer.write_u8(self.channel.into());
         buffer.write_u8(self.len);
 
@@ -397,7 +397,7 @@ impl Packet<0x27> for ReadUserCommunications {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(Box::from(buffer.get_all()))
@@ -425,7 +425,7 @@ impl Packet<0x2E> for GetKernelVariable {
         name.len() + 1
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         let name = self.variable.into();
         buffer.write_str(name, name.len() + 1);
         Ok(())
@@ -433,7 +433,7 @@ impl Packet<0x2E> for GetKernelVariable {
 
     fn read_response(
         &self,
-        buffer: &mut dyn ReadBuffer,
+        buffer: &mut dyn RawRead,
         len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(buffer.read_str(len))
@@ -462,7 +462,7 @@ impl<'a> Packet<0x2F> for SetKernelVariable<'a> {
         name.len() + 1 + self.payload.len() + 1
     }
 
-    fn write_buffer(&self, buffer: &mut dyn WriteBuffer) -> std::io::Result<()> {
+    fn write_buffer(&self, buffer: &mut dyn RawWrite) -> std::io::Result<()> {
         let name = self.variable.into();
         buffer.write_str(name, name.len() + 1);
         buffer.write_str(self.payload, self.payload.len() + 1);
@@ -471,7 +471,7 @@ impl<'a> Packet<0x2F> for SetKernelVariable<'a> {
 
     fn read_response(
         &self,
-        _buffer: &mut dyn ReadBuffer,
+        _buffer: &mut dyn RawRead,
         _len: usize,
     ) -> std::io::Result<Self::Response> {
         Ok(())
