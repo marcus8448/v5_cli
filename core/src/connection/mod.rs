@@ -5,9 +5,9 @@ use std::time::{Duration, SystemTime};
 use async_recursion::async_recursion;
 use crc::{Crc, CRC_16_XMODEM};
 
-use crate::buffer::{FixedReadBuffer, RawWrite};
+use crate::buffer::{FixedReadBuffer, OwnedBuffer, RawWrite};
 use crate::connection::bluetooth::DualSubscribedBluetoothConnection;
-use crate::packet::Packet;
+use crate::packet::{Packet, PacketBuf, PacketType};
 
 pub mod bluetooth;
 pub mod serial;
@@ -19,6 +19,7 @@ const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 static PACKETS_LOST: AtomicU16 = AtomicU16::new(0);
 
 const EXT_PACKET_ID: u8 = 0x56;
+const TIMEOUT: Duration = Duration::from_millis(500);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
@@ -39,24 +40,26 @@ pub enum Nack {
     FileExists = 0xDB,
 }
 
-impl Nack {
-    pub fn maybe_find(id: u8) -> Option<Self> {
-        match id {
-            0xFF => Some(Self::General),
-            0xCE => Some(Self::InvalidCrc),
-            0xD0 => Some(Self::PayloadTooSmall),
-            0xD1 => Some(Self::TransferSizeTooLarge),
-            0xD2 => Some(Self::CrcError),
-            0xD3 => Some(Self::ProgramFileError),
-            0xD4 => Some(Self::UninitializedTransfer),
-            0xD5 => Some(Self::InvalidInitialization),
-            0xD6 => Some(Self::NonPaddedData),
-            0xD7 => Some(Self::UnexpectedPacketAddress),
-            0xD8 => Some(Self::LengthMismatch),
-            0xD9 => Some(Self::NonExistentDirectory),
-            0xDA => Some(Self::FileIndexFull),
-            0xDB => Some(Self::FileExists),
-            _ => None,
+impl TryFrom<u8> for Nack {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0xFF => Ok(Self::General),
+            0xCE => Ok(Self::InvalidCrc),
+            0xD0 => Ok(Self::PayloadTooSmall),
+            0xD1 => Ok(Self::TransferSizeTooLarge),
+            0xD2 => Ok(Self::CrcError),
+            0xD3 => Ok(Self::ProgramFileError),
+            0xD4 => Ok(Self::UninitializedTransfer),
+            0xD5 => Ok(Self::InvalidInitialization),
+            0xD6 => Ok(Self::NonPaddedData),
+            0xD7 => Ok(Self::UnexpectedPacketAddress),
+            0xD8 => Ok(Self::LengthMismatch),
+            0xD9 => Ok(Self::NonExistentDirectory),
+            0xDA => Ok(Self::FileIndexFull),
+            0xDB => Ok(Self::FileExists),
+            _ => Err(()),
         }
     }
 }
@@ -138,7 +141,172 @@ impl Brain {
     pub fn new(connection: Box<dyn SerialConnection + Send>) -> Self {
         Self { connection }
     }
-    
+
+    pub fn packet(&mut self, content_len: u16, packet_type: PacketType) -> PacketBuf {
+        PacketBuf::new(packet_type, content_len, self)
+    }
+
+    pub async fn send_raw_packet(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+        self.connection.clear().await?;
+        self.connection.write(data).await?;
+        self.connection.flush().await?;
+        Ok(())
+    }
+
+    pub async fn find_packet_header(&mut self) -> Result<bool, std::io::Error> {
+        let mut value = 0;
+        let mut i = 0;
+        let time = SystemTime::now();
+        loop {
+            if value == RESPONSE_HEADER[i] {
+                i += 1;
+                if i == RESPONSE_HEADER.len() {
+                    break;
+                }
+            } else if i > 0 {
+                i = 0;
+                continue;
+            }
+
+            match self.connection.try_read_one().await {
+                Ok(v) => value = v,
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    value = 0;
+                    if SystemTime::now()
+                        .duration_since(time)
+                        .unwrap_or(Duration::ZERO)
+                        > TIMEOUT {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        println!(
+            "response took {}ms",
+            SystemTime::now().duration_since(time).unwrap().as_millis()
+        );
+        Ok(true)
+    }
+
+    pub async fn receive_raw_packet(&mut self, id: u8) -> Result<OwnedBuffer, std::io::Error> {
+        loop {
+            match self.find_packet_header().await {
+                Ok(true) => {
+                    break
+                }
+                Ok(false) => {
+                    return Err(std::io::ErrorKind::TimedOut.into())
+                }
+                _ => {
+                    return Err(std::io::ErrorKind::UnexpectedEof.into())
+                }
+            };
+        }
+
+        let mut payload = Vec::with_capacity(64);
+        payload.extend_from_slice(&RESPONSE_HEADER);
+
+        let mut metadata = [0_u8; 2];
+
+        self.connection.read(&mut metadata).await?;
+        let command = metadata[0];
+        let mut len: usize = metadata[1] as usize;
+
+        payload.extend_from_slice(&metadata);
+
+        if len & 0x80 == 0x80 {
+            let val = self.connection.try_read_one().await?;
+            len = ((len & 0x7f) << 8) + val as usize;
+            payload.push(val);
+        }
+
+        let start = payload.len();
+        payload.reserve(len);
+        payload.resize(start + len, 0_u8);
+
+        self.connection.read(&mut payload[start..]).await?;
+
+        assert_eq!(command, EXT_PACKET_ID);
+        assert_eq!(id, payload[start]);
+        assert_eq!(CRC16.checksum(&payload), 0);
+
+        if let Ok(nack) = Nack::try_from(payload[start + 1]) {
+            println!("NACK: {:?} ({})", &nack, payload[start + 1]);
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "NACK"));
+        }
+
+        Ok(OwnedBuffer::new(payload.into_boxed_slice(), (start + 2) as u16))
+    }
+
+    pub async fn send_simple(
+        &mut self,
+        id: u8
+    ) -> Result<OwnedBuffer, std::io::Error> {
+        let mut buffer = [0_u8; 4 + 1 + /*CRC*/ size_of::<u16>()];
+        buffer[0..PACKET_HEADER.len()].copy_from_slice(PACKET_HEADER);
+        buffer[PACKET_HEADER.len()] = id;
+
+        self.connection.clear().await?;
+        self.connection.write(&buffer).await?;
+        self.connection.flush().await?;
+
+        let mut value = 0;
+        let mut i = 0;
+        let time = SystemTime::now();
+
+        loop {
+            if value == RESPONSE_HEADER[i] {
+                i += 1;
+                if i == RESPONSE_HEADER.len() {
+                    break;
+                }
+            } else if i > 0 {
+                i = 0;
+                continue;
+            }
+
+            match self.connection.try_read_one().await {
+                Ok(v) => value = v,
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    value = 0;
+                    if SystemTime::now()
+                        .duration_since(time)
+                        .unwrap_or(Duration::ZERO)
+                        > TIMEOUT {
+                        return Err(std::io::ErrorKind::TimedOut.into());
+                    }
+                }
+            }
+        }
+        println!(
+            "response took {}ms",
+            SystemTime::now().duration_since(time).unwrap().as_millis()
+        );
+
+        let mut payload = Vec::with_capacity(64);
+        payload.extend_from_slice(&RESPONSE_HEADER);
+
+        let mut metadata = [0_u8; 2];
+
+        self.connection.read(&mut metadata).await?;
+        let command = self.connection.try_read_one().await?;
+        let len = self.connection.try_read_one().await? as usize;
+
+        payload.extend_from_slice(&metadata);
+
+        let start = payload.len();
+        payload.reserve(len);
+        payload.resize(start + len, 0_u8);
+
+        self.connection.read(&mut payload[start..]).await?;
+
+        assert_eq!(command, id);
+
+        Ok(OwnedBuffer::new(payload.into_boxed_slice(), (start + 1) as u16))
+    }
+
     #[async_recursion(?Send)]
     pub async fn send<const ID: u8, T>(
         &mut self,
@@ -174,7 +342,6 @@ impl Brain {
             buffer.write_raw(&CRC16.checksum(&buffer).to_be_bytes());
         }
 
-        // println!("sending: {:02X?}", &buffer);
         self.connection.clear().await?;
         self.connection.write(&buffer).await?;
         self.connection.flush().await?;
@@ -258,7 +425,7 @@ impl Brain {
             assert_eq!(ID, payload[start]);
             assert_eq!(CRC16.checksum(&payload), 0);
 
-            if let Some(nack) = Nack::maybe_find(payload[start + 1]) {
+            if let Ok(nack) = Nack::try_from(payload[start + 1]) {
                 println!("NACK: {:?} ({})", &nack, payload[start + 1]);
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "NACK"));
             }

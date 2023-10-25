@@ -70,6 +70,103 @@ impl<'a> FixedReadBuffer<'a> {
     }
 }
 
+
+
+pub struct OwnedBuffer {
+    buffer: Box<[u8]>,
+    pos: u16
+}
+
+impl OwnedBuffer {
+    pub(crate) fn new(buffer: Box<[u8]>, pos: u16) -> OwnedBuffer {
+        OwnedBuffer {
+            buffer,
+            pos
+        }
+    }
+}
+
+impl RawWrite for OwnedBuffer {
+    fn write_u8(&mut self, value: u8) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<u8>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u8>() as u16;
+    }
+
+    fn write_i8(&mut self, value: i8) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<i8>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i8>() as u16;
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<u16>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u16>() as u16;
+    }
+
+    fn write_i16(&mut self, value: i16) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<i16>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i16>() as u16;
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<u32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u32>() as u16;
+    }
+
+    fn write_i32(&mut self, value: i32) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i32>() as u16;
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<u64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u64>() as u16;
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<i64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i64>() as u16;
+    }
+
+    fn write_u128(&mut self, value: u128) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<u128>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u128>() as u16;
+    }
+
+    fn write_i128(&mut self, value: i128) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<i128>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i128>() as u16;
+    }
+
+    fn write_f32(&mut self, value: f32) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<f32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<f32>() as u16;
+    }
+
+    fn write_f64(&mut self, value: f64) {
+        self.buffer[self.pos as usize..self.pos as usize + size_of::<f64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<f64>() as u16;
+    }
+
+    fn write_raw(&mut self, slice: &[u8]) {
+        self.buffer[self.pos as usize..self.pos as usize + slice.len()].copy_from_slice(slice);
+        self.pos += slice.len() as u16;
+    }
+
+    fn write_str(&mut self, string: &str, target_len: usize) {
+        assert!(string.len() < target_len);
+        self.buffer[self.pos as usize..self.pos as usize + string.len()].copy_from_slice(string.as_bytes());
+        self.pos += target_len as u16;
+    }
+
+    fn pad(&mut self, amount: usize) {
+        self.pos += amount as u16; // zero-initialized
+    }
+
+    fn get_data(self) -> Box<[u8]> {
+        self.buffer
+    }
+}
+
 impl<'a> RawRead for FixedReadBuffer<'a> {
     fn read_u8(&mut self) -> u8 {
         let out = u8::from_le_bytes(
