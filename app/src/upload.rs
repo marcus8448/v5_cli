@@ -1,25 +1,20 @@
-use std::io::Read;
-use std::path::Path;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use base64::Engine;
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
+use clap::builder::NonEmptyStringValueParser;
+use crc::{Algorithm, Crc};
 use ini::Ini;
 use libdeflater::{CompressionLvl, Compressor};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
-use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
-use v5_core::clap::builder::NonEmptyStringValueParser;
+use v5_core::brain::Brain;
+use v5_core::brain::filesystem::{FileFlags, FileType, TransferDirection, TransferTarget, UploadAction, Vid};
 use v5_core::connection::RobotConnectionOptions;
-use v5_core::connection::brain::Brain;
-use v5_core::crc::{Algorithm, Crc};
 use v5_core::error::CommandError;
-use v5_core::log::info;
-use v5_core::packet::filesystem::{
-    FileTransferComplete, FileTransferInitialize, FileTransferWrite, FileType,
-    GetFileMetadataByName, SetFileTransferLink, TransferDirection, TransferTarget, UploadAction,
-    Vid,
-};
-use v5_core::time::format_description::well_known::Rfc3339;
-use v5_core::time::OffsetDateTime;
 
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm {
     width: 32,
@@ -155,7 +150,6 @@ pub(crate) async fn upload(
         timestamp,
     )
     .await;
-    println!("{}", String::from_utf8(ini.clone()).unwrap());
 
     let cold_package = cold_handle.await.unwrap()?;
     let cold_hash = base64::engine::general_purpose::STANDARD
@@ -167,7 +161,7 @@ pub(crate) async fn upload(
     let mut skip_cold = false;
 
     let mut brain = brain.await.unwrap()?;
-    let available_package = brain.send(&mut GetFileMetadataByName::new(Vid::Pros, 0, cold_package_name)).await;
+    let available_package = brain.get_file_metadata_by_name(Vid::Pros, FileFlags::empty(), cold_package_name).await;
 
     if let Ok(package) = &available_package {
         if package.size == cold_len as u32 && package.crc == crc {
@@ -178,7 +172,7 @@ pub(crate) async fn upload(
     }
 
     if !skip_cold {
-        info!("Invalid cold package! Re-uploading...");
+        println!("Invalid cold package! Re-uploading...");
         upload_file(
             &mut brain,
             TransferTarget::Flash,
@@ -235,18 +229,62 @@ pub(crate) async fn upload(
 }
 
 async fn load_compressed<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, std::io::Error> {
-    let mut file = std::fs::File::open(path)?;
-    let len = usize::try_from(file.metadata().unwrap().len()).expect("file too large");
+    let input = std::fs::read(&path)?;
+    let input_hash = extendhash::sha256::compute_hash(&input);
+    let path = path.as_ref();
+    let cache = adjacent_file(path, "cache");
+    let gz_cache = adjacent_file(path, "gz");
+
+    if let Ok(meta) = std::fs::metadata(&cache) {
+        if meta.is_file() && meta.len() == 32 {
+            if let Ok(gz_meta) = std::fs::metadata(&gz_cache) {
+                if gz_meta.is_file() {
+                    let mut cache = std::fs::File::open(&cache).unwrap();
+                    let mut data = [0_u8; 32];
+                    cache.read_exact(&mut data).unwrap();
+
+                    if input_hash == data {
+                        let gzipped = std::fs::read(&gz_cache).unwrap();
+                        cache.read_exact(&mut data).unwrap();
+                        if extendhash::sha256::compute_hash(&gzipped) == data {
+                            return Ok(gzipped);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut compressor = Compressor::new(CompressionLvl::best());
-    let max_len = compressor.gzip_compress_bound(len);
+    let max_len = compressor.gzip_compress_bound(input.len());
     let mut compressed_data = vec![0; max_len];
-    let mut input = Vec::with_capacity(len);
-    file.read_to_end(&mut input).expect("failed to read input");
     let size = compressor
         .gzip_compress(&input, &mut compressed_data)
         .unwrap();
-    compressed_data.resize(size, 0);
+    compressed_data.truncate(size);
+
+    let comp2 = compressed_data.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut cache = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(cache).unwrap();
+        let mut gz_cache = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(gz_cache).unwrap();
+
+        gz_cache.write_all(&comp2).unwrap();
+        cache.write_all(&input_hash).unwrap();
+        cache.write_all(&extendhash::sha256::compute_hash(&comp2)).unwrap();
+    });
+
     Ok(compressed_data)
+}
+
+fn adjacent_file(path: &Path, extension: &'static str) -> PathBuf {
+    if let Some(ext) = path.extension() {
+        if !ext.is_empty() {
+            if let Some(ext) = ext.to_str() {
+                return path.with_extension(format!("{}.{}", ext, extension))
+            }
+        }
+    }
+    path.with_extension(extension)
 }
 
 async fn upload_file(
@@ -263,7 +301,7 @@ async fn upload_file(
     linked_file: Option<(&str, Vid)>,
     action: UploadAction,
 ) -> Result<(), CommandError> {
-    let meta = brain.send(&mut FileTransferInitialize::new(
+    let mut transfer = brain.file_transfer_initialize(
         TransferDirection::Upload,
         target,
         vid,
@@ -275,20 +313,19 @@ async fn upload_file(
         file_type,
         remote_name,
         timestamp,
-    ))
+    )
     .await?;
-    assert!(meta.file_size >= file.len() as u32);
+    assert!(transfer.parameters.file_size >= file.len() as u32);
     if let Some((name, vid)) = linked_file {
-        brain.send(&mut SetFileTransferLink::new(name, vid)).await?;
+        transfer.set_link(name, vid).await?;
     }
-    let max_packet_size = (((meta.max_packet_size / 2) / 244) * 244) - 14;
+    let max_packet_size = (((transfer.parameters.max_packet_size / 2) / 244) * 244) - 14;
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);
-        brain.send(&mut FileTransferWrite::new(&file[i..end], address + i as u32))
-            .await?;
+        transfer.write(&file[i..end], address + i as u32).await?;
     }
-    brain.send(&mut FileTransferComplete::new(action)).await?;
+    transfer.complete(action).await?;
     Ok(())
 }
 

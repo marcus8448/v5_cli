@@ -1,4 +1,5 @@
-use v5_core::clap::{ArgMatches, Command};
+use clap::{ArgMatches, Command};
+
 use v5_core::connection::RobotConnectionOptions;
 use v5_core::error::CommandError;
 

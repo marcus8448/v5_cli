@@ -74,11 +74,11 @@ impl<'a> FixedReadBuffer<'a> {
 
 pub struct OwnedBuffer {
     buffer: Box<[u8]>,
-    pos: u16
+    pos: usize
 }
 
 impl OwnedBuffer {
-    pub(crate) fn new(buffer: Box<[u8]>, pos: u16) -> OwnedBuffer {
+    pub(crate) fn new(buffer: Box<[u8]>, pos: usize) -> OwnedBuffer {
         OwnedBuffer {
             buffer,
             pos
@@ -88,84 +88,232 @@ impl OwnedBuffer {
 
 impl RawWrite for OwnedBuffer {
     fn write_u8(&mut self, value: u8) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<u8>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<u8>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<u8>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u8>();
     }
 
     fn write_i8(&mut self, value: i8) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<i8>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<i8>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<i8>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i8>();
     }
 
     fn write_u16(&mut self, value: u16) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<u16>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<u16>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<u16>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u16>();
     }
 
     fn write_i16(&mut self, value: i16) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<i16>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<i16>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<i16>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i16>();
     }
 
     fn write_u32(&mut self, value: u32) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<u32>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<u32>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<u32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u32>();
     }
 
     fn write_i32(&mut self, value: i32) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<i32>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i32>();
     }
 
     fn write_u64(&mut self, value: u64) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<u64>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<u64>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<u64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u64>();
     }
 
     fn write_i64(&mut self, value: i64) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<i64>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<i64>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<i64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i64>();
     }
 
     fn write_u128(&mut self, value: u128) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<u128>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<u128>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<u128>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<u128>();
     }
 
     fn write_i128(&mut self, value: i128) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<i128>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<i128>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<i128>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<i128>();
     }
 
     fn write_f32(&mut self, value: f32) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<f32>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<f32>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<f32>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<f32>();
     }
 
     fn write_f64(&mut self, value: f64) {
-        self.buffer[self.pos as usize..self.pos as usize + size_of::<f64>()].copy_from_slice(&value.to_le_bytes());
-        self.pos += size_of::<f64>() as u16;
+        self.buffer[self.pos..self.pos + size_of::<f64>()].copy_from_slice(&value.to_le_bytes());
+        self.pos += size_of::<f64>();
     }
 
     fn write_raw(&mut self, slice: &[u8]) {
-        self.buffer[self.pos as usize..self.pos as usize + slice.len()].copy_from_slice(slice);
-        self.pos += slice.len() as u16;
+        self.buffer[self.pos..self.pos + slice.len()].copy_from_slice(slice);
+        self.pos += slice.len();
     }
 
     fn write_str(&mut self, string: &str, target_len: usize) {
         assert!(string.len() < target_len);
-        self.buffer[self.pos as usize..self.pos as usize + string.len()].copy_from_slice(string.as_bytes());
-        self.pos += target_len as u16;
+        self.buffer[self.pos..self.pos + string.len()].copy_from_slice(string.as_bytes());
+        self.pos += target_len;
     }
 
     fn pad(&mut self, amount: usize) {
-        self.pos += amount as u16; // zero-initialized
+        self.pos += amount; // zero-initialized
     }
 
     fn get_data(self) -> Box<[u8]> {
         self.buffer
     }
 }
+
+impl RawRead for OwnedBuffer {
+    fn read_u8(&mut self) -> u8 {
+        let out = u8::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<u8>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<u8>();
+        out
+    }
+
+    fn read_i8(&mut self) -> i8 {
+        let out = i8::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<i8>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<i8>();
+        out
+    }
+
+    fn read_u16(&mut self) -> u16 {
+        let out = u16::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<u16>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<u16>();
+        out
+    }
+
+    fn read_i16(&mut self) -> i16 {
+        let out = i16::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<i16>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<i16>();
+        out
+    }
+
+    fn read_u32(&mut self) -> u32 {
+        let out = u32::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<u32>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<u32>();
+        out
+    }
+
+    fn read_i32(&mut self) -> i32 {
+        let out = i32::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<i32>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<i32>();
+        out
+    }
+
+    fn read_u64(&mut self) -> u64 {
+        let out = u64::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<u64>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<u64>();
+        out
+    }
+
+    fn read_i64(&mut self) -> i64 {
+        let out = i64::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<i64>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<i64>();
+        out
+    }
+
+    fn read_u128(&mut self) -> u128 {
+        let out = u128::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<u128>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<u128>();
+        out
+    }
+
+    fn read_i128(&mut self) -> i128 {
+        let out = i128::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<i128>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<i128>();
+        out
+    }
+
+    fn read_f32(&mut self) -> f32 {
+        let out = f32::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<f32>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<f32>();
+        out
+    }
+
+    fn read_f64(&mut self) -> f64 {
+        let out = f64::from_le_bytes(
+            self.buffer[self.pos..self.pos + size_of::<f64>()]
+                .try_into()
+                .unwrap(),
+        );
+        self.pos += size_of::<f64>();
+        out
+    }
+
+    fn read_raw(&mut self, slice: &mut [u8]) {
+        slice.copy_from_slice(&self.buffer[self.pos..self.pos + slice.len()]);
+        self.pos += slice.len();
+    }
+
+    fn read_str(&mut self, target_len: usize) -> String {
+        let str = CStr::from_bytes_until_nul(&self.buffer[self.pos..std::cmp::min(self.pos + target_len, self.buffer.len())]).unwrap().to_str().unwrap().to_string();
+        self.pos += str.len() + 1; // null terminator
+        str
+    }
+
+    fn read_padded_str(&mut self, len: usize) -> String {
+        let str = CStr::from_bytes_until_nul(&self.buffer[self.pos..self.pos + len]).unwrap().to_str().unwrap().to_string();
+        self.pos += len;
+        str
+    }
+
+    fn skip(&mut self, amount: usize) {
+        self.pos += amount;
+    }
+
+    fn get_all(&self) -> &[u8] {
+        &self.buffer
+    }
+}
+
 
 impl<'a> RawRead for FixedReadBuffer<'a> {
     fn read_u8(&mut self) -> u8 {

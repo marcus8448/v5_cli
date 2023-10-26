@@ -1,9 +1,10 @@
 use std::time::Duration;
 
-use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
-use v5_core::connection::{RobotConnectionOptions};
+use clap::{Arg, ArgMatches, Command, value_parser};
+
+use v5_core::brain::competition::CompetitionState;
+use v5_core::connection::RobotConnectionOptions;
 use v5_core::error::CommandError;
-use v5_core::packet::competition::{CompetitionState, ManageCompetition};
 
 pub(crate) const COMMAND: &str = "competition";
 
@@ -63,7 +64,7 @@ async fn autonomous(
 ) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    brain.send(&mut ManageCompetition::new(CompetitionState::Autonomous)).await?;
+    brain.set_competition_state(CompetitionState::Autonomous, 0).await?;
     tokio::time::sleep(time).await;
     Ok(())
 }
@@ -71,14 +72,14 @@ async fn autonomous(
 async fn opcontrol(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    brain.send(&mut ManageCompetition::new(CompetitionState::OpControl)).await?;
+    brain.set_competition_state(CompetitionState::OpControl, 0).await?;
     tokio::time::sleep(time).await;
     Ok(())
 }
 
 async fn disable(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
-    brain.send(&mut ManageCompetition::new(CompetitionState::Disabled)).await?;
+    brain.set_competition_state(CompetitionState::Disabled, 0).await?;
     Ok(())
 }
 

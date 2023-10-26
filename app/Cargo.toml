@@ -6,10 +6,14 @@ edition = "2021"
 
 [dependencies]
 v5_core = { path = "../core" }
+clap = "4"
+crc = "3"
 env_logger = "0.10"
+log = "0.4"
+time = { version = "0.3", features = [ "formatting" ] }
 tokio = { version = "1.33", features = ["rt-multi-thread"] }
 
 base64 = "0.21"
 extendhash = "1"
-libdeflater = "0.14"
+libdeflater = "1.19"
 rust-ini = "0.19.0"

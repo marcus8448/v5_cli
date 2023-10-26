@@ -11,6 +11,7 @@ use btleplug::api::{
 };
 use btleplug::platform::PeripheralId;
 use futures::StreamExt;
+use log::{debug, warn};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -42,9 +43,12 @@ pub(crate) async fn connect_to_robot(
 ) -> Result<(btleplug::platform::Peripheral, Characteristics), ConnectionError> {
     let mac_address =
         mac_address.map(|address| BDAddr::from_str(&address).expect("Invalid MAC address"));
-    let mut pin = pin.map(parse_pin);
+    let mut pin = pin.as_deref().map(parse_pin);
 
-    let manager = btleplug::platform::Manager::new().await?;
+    let manager = match btleplug::platform::Manager::new().await {
+        Ok(man) => man,
+        Err(_) => return Err(ConnectionError::NoBluetoothAdapters)
+    };
     let adapters = manager.adapters().await?;
 
     if adapters.is_empty() {
@@ -77,7 +81,7 @@ pub(crate) async fn connect_to_robot(
             break;
         }
     }
-    println!(
+    debug!(
         "device search took {}ms",
         SystemTime::now()
             .duration_since(t)
@@ -93,7 +97,7 @@ pub(crate) async fn connect_to_robot(
     if !peripheral.is_connected().await? {
         peripheral.connect().await?;
     } else {
-        println!("Bluetooth peripheral already connected");
+        warn!("Bluetooth peripheral already connected");
     }
 
     peripheral.discover_services().await?;
@@ -136,13 +140,12 @@ pub(crate) async fn connect_to_robot(
         std::io::stdin()
             .read_line(&mut str)
             .expect("Failed to read stdin");
-        if str.len() == 4 && u16::from_str(&str).is_ok() {
-            pin = Some(parse_pin(str));
+        if str.len() >= 4 && u16::from_str(&str[..4]).is_ok() {
+            pin = Some(parse_pin(&str[..4]));
         }
     }
 
     let pin = pin.unwrap();
-    println!("PIN: {:?}", pin);
 
     peripheral
         .write(&code, &pin, WriteType::WithoutResponse)
@@ -150,7 +153,6 @@ pub(crate) async fn connect_to_robot(
 
     let read = peripheral.read(&code).await?;
     if read != pin {
-        println!("{:?}", read);
         return Err(ConnectionError::InvalidPIN);
     }
 
@@ -189,24 +191,17 @@ impl DualSubscribedBluetoothConnection {
         }
 
         tokio::spawn(async move {
+            let mut generator = peripheral1
+                .notifications()
+                .await
+                .expect("Failed to listen to notifications");
+
             loop {
-                let mut pin = peripheral1
-                    .notifications()
-                    .await
-                    .expect("Failed to listen to notifications");
-                loop {
-                    if let Some(val) = pin.next().await {
-                        if val.uuid == tx_characteristic.uuid {
-                            // println!(
-                            //     "SUB: {:?} `{:?}`",
-                            //     &val.value,
-                            //     String::from_utf8_lossy(&val.value)
-                            // );
-                            println!("rec");
-                            arc1.lock().await.extend(val.value);
-                        } else {
-                            dbg!(val);
-                        }
+                if let Some(val) = generator.next().await {
+                    if val.uuid == tx_characteristic.uuid {
+                        arc1.lock().await.extend(val.value);
+                    } else {
+                        panic!("Received invalid bluetooth event for characteristic {}", val.uuid)
                     }
                 }
             }
@@ -228,7 +223,6 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
         let guard = self.send_timer.lock().await;
         let mut chunks = buf.chunks_exact(244);
         for chunk in chunks.by_ref() {
-            print!("C");
             let time2 = guard.get();
             if let Some(duration) = WRITE_TIME.checked_sub(
                 SystemTime::now()
@@ -238,7 +232,6 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
                 tokio::time::sleep(duration).await;
             }
             guard.set(SystemTime::now());
-            // println!("Write chunk: {:?}", chunk);
             if let Err(err) = self
                 .peripheral
                 .write(&self.rx_characteristic, chunk, WriteType::WithoutResponse)
@@ -264,7 +257,6 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
             }
             guard.set(SystemTime::now());
             drop(guard);
-            println!("R {}", remainder.len());
             if let Err(err) = self
                 .peripheral
                 .write(&self.rx_characteristic, remainder, WriteType::WithResponse)
@@ -277,7 +269,7 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
             }
         }
 
-        println!(
+        debug!(
             "write took {}ms",
             SystemTime::now()
                 .duration_since(t)
@@ -295,7 +287,6 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
     async fn clear(&mut self) -> std::io::Result<()> {
         let mut guard = self.read_buf.lock().await;
         if !guard.is_empty() {
-            println!("cleared");
             guard.clear();
         }
 
@@ -360,7 +351,7 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
     }
 }
 
-fn parse_pin(str: String) -> [u8; 4] {
+fn parse_pin(str: &str) -> [u8; 4] {
     assert_eq!(str.len(), 4);
     let mut chars = str.chars();
     u16::from_str(&str).expect("Invalid PIN!");
@@ -385,7 +376,7 @@ async fn find_vex_device(
             }
         } else if let Ok(Some(properties)) = peripheral.properties().await {
             if properties.services.contains(&V5_ROBOT_SERVICE) {
-                println!("FOUND MAC: {}", peripheral.address());
+                debug!("Found robot: {}", peripheral.address());
                 return Some(peripheral);
             }
         }

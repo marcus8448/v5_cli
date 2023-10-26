@@ -1,26 +1,9 @@
-use std::sync::atomic::AtomicU16;
-use std::time::Duration;
-
-use crc::{Crc, CRC_16_XMODEM};
-use brain::Brain;
-
-use crate::buffer::RawWrite;
+use crate::brain::Brain;
 use crate::connection::bluetooth::DualSubscribedBluetoothConnection;
-use crate::packet::Packet;
 
 pub mod bluetooth;
 pub mod serial;
 pub mod daemon;
-mod brain;
-
-pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
-
-const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
-const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
-static PACKETS_LOST: AtomicU16 = AtomicU16::new(0);
-
-const EXT_PACKET_ID: u8 = 0x56;
-const TIMEOUT: Duration = Duration::from_millis(500);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]

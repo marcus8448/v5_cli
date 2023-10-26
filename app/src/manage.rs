@@ -1,15 +1,12 @@
-use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
-use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::connection::{RobotConnectionOptions};
+use clap::{Arg, ArgMatches, Command, value_parser};
+use clap::builder::NonEmptyStringValueParser;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+
+use v5_core::brain::filesystem::{DeleteFlags, FileFlags, Vid};
+use v5_core::brain::system::{ExecutionFlags, KernelVariable};
+use v5_core::connection::RobotConnectionOptions;
 use v5_core::error::CommandError;
-use v5_core::packet::filesystem::{
-    DeleteFile, GetDirectoryCount, GetFileMetadataByIndex, GetFileMetadataByName, Vid,
-};
-use v5_core::packet::system::{
-    ExecuteProgram, GetKernelVariable, GetSystemStatus, KernelVariable, SetKernelVariable,
-};
-use v5_core::time::format_description::well_known::Rfc3339;
-use v5_core::time::OffsetDateTime;
 
 type Result<T> = std::result::Result<T, CommandError>;
 
@@ -188,7 +185,7 @@ pub(crate) async fn manage(args: ArgMatches, options: RobotConnectionOptions) ->
 async fn get_status(options: RobotConnectionOptions) -> Result<()> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
 
-    let status = brain.send(&mut GetSystemStatus::new()).await?;
+    let status = brain.get_system_status().await?;
     println!(
         "System Version: {}\nCPU 0: {}\nCPU 1: {}\nTouch: {}\nSystem ID: {}",
         status.system, status.cpu0, status.cpu1, status.touch, status.system_id
@@ -198,13 +195,13 @@ async fn get_status(options: RobotConnectionOptions) -> Result<()> {
 
 async fn get_metadata(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
-    let metadata = brain.send(&mut GetFileMetadataByName::new(
+    let metadata = brain.get_file_metadata_by_name(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
-        0,
+        FileFlags::empty(),
         args.get_one::<String>(FILE_NAME)
             .expect("missing file name!")
-            .as_str(),
-    )).await?;
+            .as_str()
+    ).await?;
 
     println!(
         "Name: {}\nVid: {}\nSize: {}\nAddress: {}\n CRC: {}\nFile Type: {}\nTimestamp: {}",
@@ -223,23 +220,31 @@ async fn get_metadata(options: RobotConnectionOptions, args: &ArgMatches) -> Res
 
 async fn list_files(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
-    let amount = brain.send(&mut GetDirectoryCount::new(
+    let amount = brain.get_directory_count(
         Vid::from(*args.get_one::<u8>(VID).expect("missing VID")),
-        *args.get_one::<u8>(OPTION).unwrap_or(&0),
-    )).await?;
+        args.get_one::<u8>(OPTION).map(|b| FileFlags::from_bits_retain(*b)).unwrap_or(FileFlags::empty()),
+    ).await?;
 
-    for i in 0..amount {
+    for i in 0_u8..amount as u8 {
+        let meta = brain.get_file_metadata_by_index(i, FileFlags::empty()).await?;
         println!(
-            "{}\n--",
-            brain.send(&mut GetFileMetadataByIndex::new(i as u8, 0)).await?
-        );
+            "Name: {}\nVersion: {}\nSize: {}\nAddress: {}\nCRC: {}\nFile Type: {}\nTimestamp: {}",
+            meta.name,
+            meta.version,
+            meta.size,
+            meta.addr,
+            meta.crc,
+            meta.file_type,
+            OffsetDateTime::from(meta.timestamp)
+                .format(&Rfc3339)
+                .unwrap());
     }
     Ok(())
 }
 
 async fn stop_execution(options: RobotConnectionOptions) -> Result<()> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
-    brain.send(&mut ExecuteProgram::new(Vid::User, 0x80, "")).await?;
+    brain.execute_program(Vid::User, ExecutionFlags::STOP, "").await?;
     Ok(())
 }
 
@@ -247,24 +252,24 @@ async fn execute_program(options: RobotConnectionOptions, args: &ArgMatches) -> 
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("no slot provided");
-    brain.send(&mut ExecuteProgram::new(vid, 0x00, format!("slot_{}.bin", slot).as_str())).await?;
+    brain.execute_program(vid, ExecutionFlags::empty(), &format!("slot_{}.bin", slot)).await?;
     Ok(())
 }
 
 async fn remove_all_programs(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
-    let c = brain.send(&mut GetDirectoryCount::new(vid, 0)).await?;
+    let c = brain.get_directory_count(vid, FileFlags::empty()).await?;
     let mut vec = Vec::new();
     vec.reserve(c as usize);
-    for i in 0..c {
+    for i in 0_u8..c as u8 {
         vec.push(
-            brain.send(&mut GetFileMetadataByIndex::new(i as u8, 0)).await?
+            brain.get_file_metadata_by_index(i, FileFlags::empty()).await?
         );
     }
 
     for meta in vec {
-        brain.send(&mut DeleteFile::new(vid, true, &meta.name)).await?;
+        brain.delete_file(vid, DeleteFlags::ERASE_ALL, &meta.name).await?;
     }
     Ok(())
 }
@@ -276,7 +281,7 @@ async fn remove_file(options: RobotConnectionOptions, args: &ArgMatches) -> Resu
         .get_one::<String>(FILE_NAME)
         .expect("missing name")
         .clone();
-    brain.send(&mut DeleteFile::new(vid, false, &name)).await?;
+    brain.delete_file(vid, DeleteFlags::empty(), &name).await?;
     Ok(())
 }
 
@@ -284,8 +289,8 @@ async fn remove_program(options: RobotConnectionOptions, args: &ArgMatches) -> R
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let vid = Vid::from(*args.get_one::<u8>(VID).expect("missing VID"));
     let slot = *args.get_one::<u8>(SLOT).expect("missing slot");
-    brain.send(&mut DeleteFile::new(vid, false, &format!("slot_{}.bin", slot))).await?;
-    brain.send(&mut DeleteFile::new(vid, false, &format!("slot_{}.ini", slot))).await?;
+    brain.delete_file(vid, DeleteFlags::empty(), &format!("slot_{}.bin", slot)).await?;
+    brain.delete_file(vid, DeleteFlags::empty(), &format!("slot_{}.ini", slot)).await?;
     Ok(())
 }
 
@@ -304,7 +309,7 @@ async fn kernel_variable(options: RobotConnectionOptions, args: &ArgMatches) -> 
 async fn get_kernel_variable(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
-    let value = brain.send(&mut GetKernelVariable::new(variable)).await?;
+    let value = brain.get_kernel_variable(variable).await?;
     println!("{}", value);
     Ok(())
 }
@@ -313,9 +318,7 @@ async fn set_kernel_variable(options: RobotConnectionOptions, args: &ArgMatches)
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let variable = KernelVariable::try_from(&*args.get_one::<String>(VARIABLE).unwrap().clone())?;
     let value = args.get_one::<String>(VALUE).unwrap();
-    brain.send(&mut SetKernelVariable::new(variable, value.as_str())).await?;
-
-    println!("set");
+    brain.set_kernel_variable(variable, value.as_str()).await?;
     Ok(())
 }
 

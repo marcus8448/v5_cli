@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
-use v5_core::clap::{Arg, ArgAction, Command, value_parser};
+use clap::{Arg, ArgAction, Command, value_parser};
+use log::error;
+
 use v5_core::connection::RobotConnectionOptions;
 use v5_core::error::CommandError;
 
@@ -159,7 +161,7 @@ async fn run() {
                         command.print_help().unwrap();
                     }
                     _ => {
-                        println!("{}", err);
+                        error!("{}", err);
                     }
                 },
             };

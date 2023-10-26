@@ -96,17 +96,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-recursion"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd55a5ba1179988837d24ab4c7cc8ed6efdeff578ede0416b4225a5fca35bd0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -725,18 +714,18 @@ dependencies = [
 
 [[package]]
 name = "libdeflate-sys"
-version = "0.14.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "012437ac39c1e7d7ba12af3aceceb5c93149779aa17c2b1c483f33954957ddc8"
+checksum = "67921a7f85100c1559efc3d1c7c472091b7da05f304b4bbd5356f075e97f1cc2"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "libdeflater"
-version = "0.14.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58b30f982ddb14aae2a24a7ed7b3d512d687c2483493f95de7a6d167942a19c3"
+checksum = "3a31b22f662350ec294b13859f935aea772ba7b2bc8776269f4a5627308eab7d"
 dependencies = [
  "libdeflate-sys",
 ]
@@ -1295,10 +1284,14 @@ name = "v5_cli"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "clap",
+ "crc",
  "env_logger",
  "extendhash",
  "libdeflater",
+ "log",
  "rust-ini",
+ "time",
  "tokio",
  "v5_core",
 ]
@@ -1307,16 +1300,14 @@ dependencies = [
 name = "v5_core"
 version = "0.1.0"
 dependencies = [
- "async-recursion",
  "async-trait",
+ "bitflags 2.4.1",
  "btleplug",
- "clap",
  "crc",
  "futures",
  "log",
  "serde",
  "thiserror",
- "time",
  "tokio",
  "tokio-serial",
  "uuid",

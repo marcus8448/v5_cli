@@ -3,9 +3,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::io::{AsyncWriteExt};
+
+use clap::{Arg, ArgMatches, Command, value_parser};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
+
 use v5_core::connection::{RobotConnectionOptions, SerialConnection};
 use v5_core::error::CommandError;
 
@@ -47,8 +49,7 @@ pub(crate) async fn daemon(args: ArgMatches, options: RobotConnectionOptions) ->
 }
 
 async fn user_loop(listener: TcpListener, mut connection: Box<dyn SerialConnection + Send>, active: Arc<AtomicBool>) {
-    while let Ok((mut stream, addr)) = listener.accept().await {
-        println!("connect {}", addr);
+    while let Ok((mut stream, _addr)) = listener.accept().await {
         active.store(true, Ordering::Relaxed);
         let mut buf = [0_u8; 2048];
         let _ = connection.read_to_end(&mut Vec::new()).await;
@@ -81,9 +82,8 @@ async fn user_loop(listener: TcpListener, mut connection: Box<dyn SerialConnecti
     }
 }
 
-async fn system_loop(listener: TcpListener, mut connection: Box<dyn SerialConnection + Send>, active: Arc<AtomicBool>) {
-    while let Ok((mut stream, addr)) = listener.accept().await {
-        println!("connect system {}", addr);
+async fn system_loop(listener: TcpListener, mut connection: Box<dyn SerialConnection + Send>, _active: Arc<AtomicBool>) {
+    while let Ok((mut stream, _addr)) = listener.accept().await {
         let mut buf = [0_u8; 2048];
         let _ = connection.read_to_end(&mut Vec::new()).await;
         loop {
