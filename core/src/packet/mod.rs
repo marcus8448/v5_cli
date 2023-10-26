@@ -2,7 +2,8 @@ use std::fmt::Debug;
 use std::mem::size_of;
 
 use crate::buffer::{OwnedBuffer, RawRead, RawWrite};
-use crate::connection::{Brain, CRC16};
+use crate::connection::CRC16;
+use crate::connection::brain::Brain;
 use crate::packet::PacketType::Custom;
 
 pub mod competition;
@@ -156,10 +157,6 @@ impl<'a> RawWrite for PacketBuf<'a> {
     fn get_data(self) -> Box<[u8]> {
         self.buffer
     }
-}
-
-enum Test {
-    JAK = 0x0
 }
 
 #[async_trait::async_trait]

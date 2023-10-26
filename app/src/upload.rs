@@ -8,7 +8,8 @@ use libdeflater::{CompressionLvl, Compressor};
 
 use v5_core::clap::{Arg, ArgAction, ArgMatches, Command, value_parser, ValueHint};
 use v5_core::clap::builder::NonEmptyStringValueParser;
-use v5_core::connection::{Brain, RobotConnectionOptions, RobotConnectionType};
+use v5_core::connection::RobotConnectionOptions;
+use v5_core::connection::brain::Brain;
 use v5_core::crc::{Algorithm, Crc};
 use v5_core::error::CommandError;
 use v5_core::log::info;
@@ -139,10 +140,7 @@ pub(crate) async fn upload(
     let file_ini = format!("slot_{}.ini", index);
     let action = UploadAction::try_from(action.as_str()).unwrap();
 
-    let brain = tokio::task::spawn(v5_core::connection::connect(
-        RobotConnectionType::System,
-        options,
-    ));
+    let brain = tokio::task::spawn(v5_core::connection::connect_to_brain(options));
     let cold_handle = tokio::task::spawn(load_compressed(cold_package_path)); //probably overkill
     let hot_handle = tokio::task::spawn(load_compressed(hot_package_path));
 

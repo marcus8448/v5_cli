@@ -1,5 +1,5 @@
 use crate::buffer::{RawRead, RawWrite};
-use crate::connection::Brain;
+use crate::connection::brain::Brain;
 use crate::error::ParseError;
 use crate::packet::Packet;
 

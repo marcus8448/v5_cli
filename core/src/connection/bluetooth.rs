@@ -223,7 +223,7 @@ impl DualSubscribedBluetoothConnection {
 
 #[async_trait]
 impl SerialConnection for DualSubscribedBluetoothConnection {
-    async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         let t = SystemTime::now();
         let guard = self.send_timer.lock().await;
         let mut chunks = buf.chunks_exact(244);
@@ -302,29 +302,39 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
         Ok(())
     }
 
+    async fn try_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut guard = self.read_buf.lock().await;
+        let len = buf.len().min(guard.len());
+        buf[..len].copy_from_slice(&guard[..len]);
+        guard.copy_within(len.., 0);
+        let i = guard.len();
+        guard.truncate(i - len);
+        Ok(len)
+    }
+
+    async fn read_to_end(&mut self, vec: &mut Vec<u8>) -> std::io::Result<usize> {
+        let mut guard = self.read_buf.lock().await;
+        let len = guard.len();
+        vec.extend_from_slice(&guard);
+        guard.clear();
+        Ok(len)
+    }
+
     async fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<()> {
         let mut fail = 0;
         while !buf.is_empty() {
-            match {
-                let mut guard = self.read_buf.lock().await;
-                let len = buf.len().min(guard.len());
-                buf[..len].copy_from_slice(&guard[..len]);
-                guard.copy_within(len.., 0);
-                let i = guard.len();
-                guard.truncate(i - len);
-                len
-            } {
-                0 => {
+            match self.try_read(buf).await {
+                Ok(0) => {
                     fail += 1;
                     if fail >= 1000 / 10 {
                         break;
                     }
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
-                n => {
-                    let tmp = buf;
-                    buf = &mut tmp[n..];
+                Ok(n) => {
+                    buf = &mut buf[n..];
                 }
+                Err(e) => return Err(e)
             }
         }
         if !buf.is_empty() {

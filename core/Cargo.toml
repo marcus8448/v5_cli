@@ -14,7 +14,7 @@ futures = "0.3"
 serde = "1"
 thiserror = "1.0"
 time = { version = "0.3", features = [ "formatting" ] }
-tokio = { version = "1.33", features = ["rt"] }
+tokio = { version = "1.33", features = ["rt", "io-util"] }
 tokio-serial = { version = "5.4", features = ["libudev"] }
 uuid = "1.5"
 async-recursion = "1.0.5"

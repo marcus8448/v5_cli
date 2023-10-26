@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use v5_core::clap::{Arg, ArgMatches, Command, value_parser};
-use v5_core::connection::{RobotConnectionOptions, RobotConnectionType};
+use v5_core::connection::{RobotConnectionOptions};
 use v5_core::error::CommandError;
 use v5_core::packet::competition::{CompetitionState, ManageCompetition};
 
@@ -61,7 +61,7 @@ async fn autonomous(
     options: RobotConnectionOptions,
     args: &ArgMatches,
 ) -> Result<(), CommandError> {
-    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
     brain.send(&mut ManageCompetition::new(CompetitionState::Autonomous)).await?;
     tokio::time::sleep(time).await;
@@ -69,7 +69,7 @@ async fn autonomous(
 }
 
 async fn opcontrol(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
-    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
     brain.send(&mut ManageCompetition::new(CompetitionState::OpControl)).await?;
     tokio::time::sleep(time).await;
@@ -77,13 +77,13 @@ async fn opcontrol(options: RobotConnectionOptions, args: &ArgMatches) -> Result
 }
 
 async fn disable(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
-    let mut brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    let mut brain = v5_core::connection::connect_to_brain(options).await?;
     brain.send(&mut ManageCompetition::new(CompetitionState::Disabled)).await?;
     Ok(())
 }
 
 async fn start(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
-    let _brain = v5_core::connection::connect(RobotConnectionType::System, options).await?;
+    let _brain = v5_core::connection::connect_to_brain(options).await?;
     //todo
     Ok(())
 }

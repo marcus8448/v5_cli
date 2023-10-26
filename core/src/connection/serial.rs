@@ -2,9 +2,7 @@ use std::io::{Read, Write};
 use std::io::ErrorKind::WouldBlock;
 use std::time::Duration;
 
-use tokio_serial::{
-    DataBits, FlowControl, Parity, SerialPort, SerialPortBuilderExt, SerialPortType, SerialStream,
-};
+use tokio_serial::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, SerialPortBuilderExt, SerialPortType, SerialStream};
 
 use crate::connection::SerialConnection;
 use crate::error::ConnectionError;
@@ -15,23 +13,19 @@ pub struct SerialPortConnection {
 
 #[async_trait::async_trait]
 impl SerialConnection for SerialPortConnection {
-    async fn write(&mut self, buf: &[u8]) -> std::io::Result<()> {
+    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         loop {
             #[cfg(not(windows))]
             self.serial_port.writable().await?;
             match self.serial_port.write_all(buf) {
-                Ok(_) => break,
-                Err(err) => {
-                    if err.kind() != WouldBlock {
-                        return Err(err);
-                    } else {
-                        #[cfg(windows)]
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-                    }
+                Ok(_) => return Ok(()),
+                Err(err) if err.kind() == WouldBlock => {
+                    #[cfg(windows)]
+                    tokio::time::sleep(Duration::from_millis(1)).await;
                 }
+                Err(err) => return Err(err)
             }
         }
-        Ok(())
     }
 
     async fn flush(&mut self) -> std::io::Result<()> {
@@ -39,8 +33,16 @@ impl SerialConnection for SerialPortConnection {
     }
 
     async fn clear(&mut self) -> std::io::Result<()> {
-        let _ = self.serial_port.read_to_end(&mut Vec::<u8>::new());
+        self.serial_port.clear(ClearBuffer::All)?;
         Ok(())
+    }
+
+    async fn try_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.serial_port.try_read(buf)
+    }
+
+    async fn read_to_end(&mut self, vec: &mut Vec<u8>) -> std::io::Result<usize> {
+        self.serial_port.read_to_end(vec)
     }
 
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
@@ -49,14 +51,11 @@ impl SerialConnection for SerialPortConnection {
             self.serial_port.readable().await?;
             match self.serial_port.read_exact(buf) {
                 Ok(_) => return Ok(()),
-                Err(err) => {
-                    if err.kind() != WouldBlock {
-                        return Err(err);
-                    } else {
-                        #[cfg(windows)]
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-                    }
+                Err(err) if err.kind() == WouldBlock => {
+                    #[cfg(windows)]
+                    tokio::time::sleep(Duration::from_millis(1)).await;
                 }
+                Err(err) => return Err(err)
             };
         }
     }
@@ -75,14 +74,11 @@ impl SerialConnection for SerialPortConnection {
                         "eof",
                     ))
                 }
-                Err(err) => {
-                    if err.kind() != WouldBlock {
-                        return Err(err);
-                    } else {
-                        #[cfg(windows)]
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-                    }
+                Err(err) if err.kind() == WouldBlock => {
+                    #[cfg(windows)]
+                    tokio::time::sleep(Duration::from_millis(1)).await;
                 }
+                Err(err) => return Err(err)
             };
         }
     }
