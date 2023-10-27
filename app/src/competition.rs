@@ -42,6 +42,7 @@ pub(crate) fn command() -> Command {
 }
 
 pub(crate) async fn competition(
+    cmd: &mut Command,
     args: ArgMatches,
     options: RobotConnectionOptions,
 ) -> Result<(), CommandError> {
@@ -51,9 +52,13 @@ pub(crate) async fn competition(
             AUTONOMOUS => autonomous(options, args).await,
             OPCONTROL => opcontrol(options, args).await,
             DISABLE => disable(options, args).await,
-            _ => Err(CommandError::InvalidSubcommand),
+            _ => {
+                cmd.print_long_help().unwrap();
+                Err(CommandError::InvalidSubcommand)
+            },
         }
     } else {
+        cmd.print_long_help().unwrap();
         Err(CommandError::InvalidSubcommand)
     }
 }

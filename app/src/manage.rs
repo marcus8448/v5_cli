@@ -162,7 +162,7 @@ pub(crate) fn command() -> Command {
         )
 }
 
-pub(crate) async fn manage(args: ArgMatches, options: RobotConnectionOptions) -> std::result::Result<(), CommandError> {
+pub(crate) async fn manage(cmd: &mut Command, args: ArgMatches, options: RobotConnectionOptions) -> std::result::Result<(), CommandError> {
     if let Some((command, args)) = args.subcommand() {
         match command {
             STATUS => get_status(options).await,
@@ -173,11 +173,15 @@ pub(crate) async fn manage(args: ArgMatches, options: RobotConnectionOptions) ->
             REMOVE_ALL_PROGRAMS => remove_all_programs(options, args).await,
             REMOVE_FILE => remove_file(options, args).await,
             REMOVE_PROGRAM => remove_program(options, args).await,
-            KERNEL_VARIABLE => kernel_variable(options, args).await,
+            KERNEL_VARIABLE => kernel_variable(cmd.find_subcommand_mut(KERNEL_VARIABLE).unwrap(), options, args).await,
             CAPTURE => capture_screen(options, args).await,
-            _ => Err(CommandError::InvalidSubcommand),
+            _ => {
+                cmd.print_long_help().unwrap();
+                Err(CommandError::InvalidSubcommand)
+            },
         }
     } else {
+        cmd.print_long_help().unwrap();
         Err(CommandError::InvalidSubcommand)
     }
 }
@@ -294,14 +298,18 @@ async fn remove_program(options: RobotConnectionOptions, args: &ArgMatches) -> R
     Ok(())
 }
 
-async fn kernel_variable(options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
+async fn kernel_variable(cmd: &mut Command, options: RobotConnectionOptions, args: &ArgMatches) -> Result<()> {
     if let Some((command, args)) = args.subcommand() {
         match command {
             GET => get_kernel_variable(options, args).await,
             SET => set_kernel_variable(options, args).await,
-            _ => return Err(CommandError::InvalidSubcommand),
+            _ => {
+                cmd.print_long_help().unwrap();
+                return Err(CommandError::InvalidSubcommand)
+            },
         }
     } else {
+        cmd.print_long_help().unwrap();
         return Err(CommandError::InvalidSubcommand);
     }
 }

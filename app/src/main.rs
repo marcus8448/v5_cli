@@ -1,10 +1,7 @@
-use std::sync::OnceLock;
-
 use clap::{Arg, ArgAction, Command, value_parser};
 use log::error;
 
 use v5_core::connection::RobotConnectionOptions;
-use v5_core::error::CommandError;
 
 mod competition;
 mod manage;
@@ -20,8 +17,6 @@ const SYSTEM_PORT: &str = "system";
 const MAC_ADDRESS: &str = "mac-address";
 const PIN: &str = "pin";
 const VERBOSE: &str = "verbose";
-
-pub static BASE_COMMAND: OnceLock<Command> = OnceLock::new();
 
 fn main() {
     env_logger::init();
@@ -104,9 +99,9 @@ async fn run() {
         .subcommand(terminal::command())
         .subcommand(upload::command())
         .subcommand(daemon::command());
+    command.build();
 
 
-    BASE_COMMAND.set(command.clone()).unwrap();
     let root = command.get_matches_mut();
     match root.subcommand() {
         None => {
@@ -136,19 +131,19 @@ async fn run() {
 
             match match name {
                 competition::COMMAND => {
-                    competition::competition(matches.clone(), options).await
+                    competition::competition(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
                 }
                 manage::COMMAND => {
-                    manage::manage(matches.clone(), options).await
+                    manage::manage(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
                 }
                 terminal::COMMAND => {
-                    terminal::terminal(matches.clone(), options).await
+                    terminal::terminal(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
                 }
                 upload::COMMAND => {
-                    upload::upload(matches.clone(), options).await
+                    upload::upload(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
                 }
                 daemon::COMMAND => {
-                    daemon::daemon(matches.clone(), options).await
+                    daemon::daemon(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
                 }
                 &_ => {
                     command.print_help().unwrap();
@@ -157,9 +152,6 @@ async fn run() {
             } {
                 Ok(_) => {}
                 Err(err) => match err {
-                    CommandError::InvalidSubcommand => {
-                        command.print_help().unwrap();
-                    }
                     _ => {
                         error!("{}", err);
                     }

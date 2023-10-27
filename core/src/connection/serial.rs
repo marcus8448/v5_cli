@@ -41,10 +41,6 @@ impl SerialConnection for SerialPortConnection {
         self.serial_port.try_read(buf)
     }
 
-    async fn read_to_end(&mut self, vec: &mut Vec<u8>) -> std::io::Result<usize> {
-        self.serial_port.read_to_end(vec)
-    }
-
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         loop {
             #[cfg(not(windows))]

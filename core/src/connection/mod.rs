@@ -158,7 +158,6 @@ pub trait SerialConnection {
 
     async fn clear(&mut self) -> std::io::Result<()>;
     async fn try_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
-    async fn read_to_end(&mut self, vec: &mut Vec<u8>) -> std::io::Result<usize>;
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
     async fn try_read_one(&mut self) -> std::io::Result<u8>;
 }

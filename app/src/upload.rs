@@ -104,6 +104,7 @@ pub(crate) fn command() -> Command {
 }
 
 pub(crate) async fn upload(
+    _cmd: &mut Command,
     args: ArgMatches,
     options: RobotConnectionOptions,
 ) -> Result<(), CommandError> {

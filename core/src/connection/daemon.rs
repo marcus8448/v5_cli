@@ -22,7 +22,7 @@ impl SerialConnection for SharedConnection {
                 Ok(_) => return Ok(()),
                 Err(err) if err.kind() == WouldBlock => {
                     #[cfg(windows)]
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 }
                 Err(err) => return Err(err)
             }
@@ -30,29 +30,23 @@ impl SerialConnection for SharedConnection {
     }
 
     async fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.writable().await?;
         self.stream.flush().await
     }
 
     async fn clear(&mut self) -> std::io::Result<()> {
-        self.stream.read_to_end(&mut Vec::<u8>::new()).await?;
+        let mut buf = [0_u8; 128];
+        while let Ok(len) = self.stream.try_read(&mut buf) {
+            if len == 0 {
+                break
+            }
+        }
         Ok(())
     }
 
     async fn try_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.stream.readable().await?;
-
         return match self.stream.try_read(buf) {
             Ok(len) => Ok(len),
-            Err(err) => Err(err)
-        };
-    }
-
-    async fn read_to_end(&mut self, vec: &mut Vec<u8>) -> std::io::Result<usize> {
-        self.stream.readable().await?;
-
-        return match self.stream.read_to_end(vec).await {
-            Ok(len) => Ok(len),
-            Err(err) if err.kind() == WouldBlock => self.read_to_end(vec).await,
             Err(err) => Err(err)
         };
     }
@@ -76,8 +70,6 @@ impl SerialConnection for SharedConnection {
     async fn try_read_one(&mut self) -> std::io::Result<u8> {
         let mut buf = [0_u8; 1];
         loop {
-            self.stream.readable().await?;
-
             return match self.stream.try_read(&mut buf) {
                 Ok(1) => Ok(buf[0]),
                 Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof")),

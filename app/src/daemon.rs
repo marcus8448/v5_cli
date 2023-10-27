@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::{Arg, ArgMatches, Command, value_parser};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use v5_core::connection::{RobotConnectionOptions, SerialConnection};
@@ -19,7 +19,7 @@ const SYSTEM_PORT: &str = "system";
 
 pub(crate) fn command() -> Command {
     Command::new(COMMAND)
-        .about("Simulate a competition")
+        .about("Share connection to robot")
         .arg(
             Arg::new(SYSTEM_PORT)
                 .default_value("5735")
@@ -34,36 +34,43 @@ pub(crate) fn command() -> Command {
         )
 }
 
-pub(crate) async fn daemon(args: ArgMatches, options: RobotConnectionOptions) -> Result<()> {
+pub(crate) async fn daemon(_cmd: &mut Command, args: ArgMatches, options: RobotConnectionOptions) -> Result<()> {
     let user_port: u16 = *args.get_one(USER_PORT).unwrap();
     let system_port: u16 = *args.get_one(SYSTEM_PORT).unwrap();
     let user_listener = tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), user_port)).await?;
     let system_listener = tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), system_port)).await?;
-    let (user, brain) = v5_core::connection::connect_to_all(options).await?;
+    let (brain, user) = v5_core::connection::connect_to_all(options).await?;
     let active = Arc::new(AtomicBool::new(false));
-    let handle = tokio::task::spawn(user_loop(user_listener, user, Arc::clone(&active)));
-    let handle2 = tokio::task::spawn(system_loop(system_listener, brain, active));
-    handle.await.unwrap();
-    handle2.await.unwrap();
+    tokio::select! {
+        v = tokio::task::spawn(user_loop(user_listener, user, Arc::clone(&active))) => v.unwrap(),
+        v = tokio::task::spawn(system_loop(system_listener, brain, active)) => v.unwrap(),
+    }
     Ok(())
 }
 
 async fn user_loop(listener: TcpListener, mut connection: Box<dyn SerialConnection + Send>, active: Arc<AtomicBool>) {
     while let Ok((mut stream, _addr)) = listener.accept().await {
         active.store(true, Ordering::Relaxed);
-        let mut buf = [0_u8; 2048];
-        let _ = connection.read_to_end(&mut Vec::new()).await;
+        let mut buf = [0_u8; 4096];
+        let _ = connection.try_read(&mut buf);
         loop {
             let len = match connection.try_read(&mut buf).await {
                 Ok(len) => len,
                 Err(_) => break
             };
             if len > 0 {
-                stream.writable().await.unwrap();
+                match stream.writable().await {
+                    Ok(_) => {},
+                    Err(_) => break
+                }
                 match stream.write_all(&buf[..len]).await {
                     Ok(_) => {},
                     Err(_) => break
                 };
+            }
+            match stream.readable().await {
+                Ok(_) => {},
+                Err(_) => break
             }
             let len = match stream.try_read(&mut buf) {
                 Ok(len) => len,
@@ -73,6 +80,10 @@ async fn user_loop(listener: TcpListener, mut connection: Box<dyn SerialConnecti
             if len > 0 {
                 match connection.write_all(&buf[..len]).await {
                     Ok(_) => {}
+                    Err(_) => break
+                };
+                match connection.flush().await {
+                    Ok(_) => {},
                     Err(_) => break
                 };
             }
@@ -82,21 +93,30 @@ async fn user_loop(listener: TcpListener, mut connection: Box<dyn SerialConnecti
     }
 }
 
-async fn system_loop(listener: TcpListener, mut connection: Box<dyn SerialConnection + Send>, _active: Arc<AtomicBool>) {
+async fn system_loop(listener: TcpListener, mut connection: Box<dyn SerialConnection + Send>, active: Arc<AtomicBool>) {
     while let Ok((mut stream, _addr)) = listener.accept().await {
-        let mut buf = [0_u8; 2048];
-        let _ = connection.read_to_end(&mut Vec::new()).await;
+        println!("new conneciton");
+        active.store(true, Ordering::Relaxed);
+        let mut buf = [0_u8; 4096];
+        let _ = connection.try_read(&mut buf);
         loop {
             let len = match connection.try_read(&mut buf).await {
                 Ok(len) => len,
                 Err(_) => break
             };
             if len > 0 {
-                stream.writable().await.unwrap();
+                match stream.writable().await {
+                    Ok(_) => {},
+                    Err(_) => break
+                }
                 match stream.write_all(&buf[..len]).await {
                     Ok(_) => {},
                     Err(_) => break
                 };
+            }
+            match stream.readable().await {
+                Ok(_) => {},
+                Err(_) => break
             }
             let len = match stream.try_read(&mut buf) {
                 Ok(len) => len,
@@ -108,9 +128,14 @@ async fn system_loop(listener: TcpListener, mut connection: Box<dyn SerialConnec
                     Ok(_) => {}
                     Err(_) => break
                 };
+                match connection.flush().await {
+                    Ok(_) => {},
+                    Err(_) => break
+                };
             }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        connection.write_all(&[0_u8; 1024]).await.unwrap();
+        print!("end connection");
+        active.store(false, Ordering::Relaxed);
     }
 }

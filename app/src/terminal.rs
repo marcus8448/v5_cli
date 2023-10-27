@@ -12,6 +12,6 @@ pub(crate) fn command() -> Command {
         .about("Open serial connection to the robot")
 }
 
-pub(crate) async fn terminal(_args: ArgMatches, _options: RobotConnectionOptions) -> Result<()> {
+pub(crate) async fn terminal(_cmd: &mut Command, _args: ArgMatches, _options: RobotConnectionOptions) -> Result<()> {
     Ok(())
 }

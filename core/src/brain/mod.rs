@@ -62,6 +62,7 @@ impl Brain {
                         .duration_since(time)
                         .unwrap_or(Duration::ZERO)
                         > TIMEOUT {
+                        println!("Timed out.");
                         return Ok(false);
                     }
                 }

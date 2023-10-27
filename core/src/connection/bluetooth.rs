@@ -200,8 +200,6 @@ impl DualSubscribedBluetoothConnection {
                 if let Some(val) = generator.next().await {
                     if val.uuid == tx_characteristic.uuid {
                         arc1.lock().await.extend(val.value);
-                    } else {
-                        panic!("Received invalid bluetooth event for characteristic {}", val.uuid)
                     }
                 }
             }
@@ -300,14 +298,6 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
         guard.copy_within(len.., 0);
         let i = guard.len();
         guard.truncate(i - len);
-        Ok(len)
-    }
-
-    async fn read_to_end(&mut self, vec: &mut Vec<u8>) -> std::io::Result<usize> {
-        let mut guard = self.read_buf.lock().await;
-        let len = guard.len();
-        vec.extend_from_slice(&guard);
-        guard.clear();
         Ok(len)
     }
 
