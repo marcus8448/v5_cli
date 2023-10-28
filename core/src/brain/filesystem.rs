@@ -308,13 +308,13 @@ impl<'a> FileTransfer<'a> {
         Ok(())
     }
 
-    pub async fn write(&mut self, slice: &'a [u8], address: u32) -> Result<(), std::io::Error> {
+    pub async fn write(&mut self, slice: &[u8], address: u32) -> Result<(), std::io::Error> {
         let mut packet = self.brain.packet(
             size_of::<u32>() + slice.len() + if slice.len() % 4 != 0 {
                 4 - (slice.len() % 4)
             } else {
                 0
-            }, 0x10);
+            }, 0x13);
 
         packet.write_u32(address);
         packet.write_raw(slice);

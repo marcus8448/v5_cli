@@ -129,6 +129,7 @@ pub(crate) async fn connect_to_robot(
 
     let vec = peripheral.read(&code).await?;
     if u32::from_be_bytes(vec[0..4].try_into().unwrap()) == 0xdeadface {
+        debug!("Sending PIN display request");
         peripheral
             .write(&code, &[0xFF, 0xFF, 0xFF, 0xFF], WriteType::WithoutResponse)
             .await?;

@@ -160,6 +160,7 @@ impl RawWrite for OwnedBuffer {
 
     fn pad(&mut self, amount: usize) {
         self.pos += amount; // zero-initialized
+        assert!(self.pos <= self.buffer.len())
     }
 
     fn get_data(self) -> Box<[u8]> {
@@ -526,6 +527,8 @@ impl RawWrite for Vec<u8> {
     }
 
     fn pad(&mut self, amount: usize) {
+        self.reserve(amount);
+
         for _ in 0..amount {
             self.push(0)
         }

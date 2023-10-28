@@ -32,6 +32,8 @@ impl Brain {
     }
 
     pub async fn send_raw_packet(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+        assert_eq!(CRC16.checksum(data), 0);
+
         self.connection.clear().await?;
         self.connection.write_all(data).await?;
         self.connection.flush().await?;
@@ -62,7 +64,6 @@ impl Brain {
                         .duration_since(time)
                         .unwrap_or(Duration::ZERO)
                         > TIMEOUT {
-                        println!("Timed out.");
                         return Ok(false);
                     }
                 }
@@ -201,6 +202,8 @@ impl<'a> Packet<'a> {
     }
 
     pub async fn send(mut self) -> Result<OwnedBuffer, std::io::Error> {
+        assert_eq!(self.buffer.len() - size_of::<u16>(), self.pos);
+
         self.write_raw(&CRC16.checksum(&self.buffer[..self.pos]).to_be_bytes());
         let mut failed = 0;
         loop {
@@ -290,6 +293,7 @@ impl<'a> RawWrite for Packet<'a> {
 
     fn pad(&mut self, amount: usize) {
         self.pos += amount; // zero-initialized
+        assert!(self.pos <= self.buffer.len())
     }
 
     fn get_data(self) -> Box<[u8]> {

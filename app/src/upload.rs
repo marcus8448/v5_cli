@@ -36,6 +36,7 @@ const NAME: &str = "name";
 const DESCRIPTION: &str = "description";
 const INDEX: &str = "index";
 const ACTION: &str = "action";
+
 pub(crate) fn command() -> Command {
     Command::new(COMMAND)
         .about("Uploads a program to the robot")
