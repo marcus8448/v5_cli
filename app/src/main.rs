@@ -1,13 +1,12 @@
 use clap::{Arg, ArgAction, Command, value_parser};
-use log::error;
 
 use v5_core::connection::RobotConnectionOptions;
 
 mod competition;
+mod daemon;
 mod manage;
 mod terminal;
 mod upload;
-mod daemon;
 
 const PORT: &str = "port";
 const BLUETOOTH: &str = "bluetooth";
@@ -87,7 +86,8 @@ async fn run() {
                 .value_parser(value_parser!(u16))
                 .action(ArgAction::Set)
                 .requires(DAEMON),
-        )        .arg(
+        )
+        .arg(
             Arg::new(VERBOSE)
                 .help("Enables extra debug logging")
                 .short('v')
@@ -101,11 +101,10 @@ async fn run() {
         .subcommand(daemon::command());
     command.build();
 
-
     let root = command.get_matches_mut();
     match root.subcommand() {
         None => {
-            command.print_help().unwrap();
+            command.print_help().expect("failed to print help");
         }
         Some((name, matches)) => {
             let options = if root.get_flag(BLUETOOTH) {
@@ -119,7 +118,7 @@ async fn run() {
             } else if root.get_flag(DAEMON) {
                 RobotConnectionOptions::Daemon {
                     user_port: *root.get_one(USER_PORT).expect("missing user port"),
-                    system_port: *root.get_one(SYSTEM_PORT).expect("missing system port")
+                    system_port: *root.get_one(SYSTEM_PORT).expect("missing system port"),
                 }
             } else {
                 let port: Option<&String> = root.get_one(PORT);
@@ -131,31 +130,52 @@ async fn run() {
 
             match match name {
                 competition::COMMAND => {
-                    competition::competition(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
+                    competition::competition(
+                        command.find_subcommand_mut(name).expect("get subcommand"),
+                        matches.clone(),
+                        options,
+                    )
+                    .await
                 }
                 manage::COMMAND => {
-                    manage::manage(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
+                    manage::manage(
+                        command.find_subcommand_mut(name).expect("get subcommand"),
+                        matches.clone(),
+                        options,
+                    )
+                    .await
                 }
                 terminal::COMMAND => {
-                    terminal::terminal(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
+                    terminal::terminal(
+                        command.find_subcommand_mut(name).expect("get subcommand"),
+                        matches.clone(),
+                        options,
+                    )
+                    .await
                 }
                 upload::COMMAND => {
-                    upload::upload(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
+                    upload::upload(
+                        command.find_subcommand_mut(name).expect("get subcommand"),
+                        matches.clone(),
+                        options,
+                    )
+                    .await
                 }
                 daemon::COMMAND => {
-                    daemon::daemon(command.find_subcommand_mut(name).unwrap(), matches.clone(), options).await
+                    daemon::daemon(
+                        command.find_subcommand_mut(name).expect("get subcommand"),
+                        matches.clone(),
+                        options,
+                    )
+                    .await
                 }
                 &_ => {
-                    command.print_help().unwrap();
+                    command.print_help().expect("print help");
                     return;
                 }
             } {
                 Ok(_) => {}
-                Err(err) => match err {
-                    _ => {
-                        error!("{}", err);
-                    }
-                },
+                Err(err) => println!("{}", err)
             };
         }
     }

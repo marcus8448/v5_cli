@@ -53,12 +53,12 @@ pub(crate) async fn competition(
             OPCONTROL => opcontrol(options, args).await,
             DISABLE => disable(options, args).await,
             _ => {
-                cmd.print_long_help().unwrap();
+                cmd.print_long_help().expect("failed to print help");
                 Err(CommandError::InvalidSubcommand)
-            },
+            }
         }
     } else {
-        cmd.print_long_help().unwrap();
+        cmd.print_long_help().expect("failed to print help");
         Err(CommandError::InvalidSubcommand)
     }
 }
@@ -69,7 +69,9 @@ async fn autonomous(
 ) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    brain.set_competition_state(CompetitionState::Autonomous, 0).await?;
+    brain
+        .set_competition_state(CompetitionState::Autonomous, 0)
+        .await?;
     tokio::time::sleep(time).await;
     Ok(())
 }
@@ -77,14 +79,18 @@ async fn autonomous(
 async fn opcontrol(options: RobotConnectionOptions, args: &ArgMatches) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
     let time = Duration::from_millis(*args.get_one::<u64>(LENGTH).expect("length"));
-    brain.set_competition_state(CompetitionState::OpControl, 0).await?;
+    brain
+        .set_competition_state(CompetitionState::OpControl, 0)
+        .await?;
     tokio::time::sleep(time).await;
     Ok(())
 }
 
 async fn disable(options: RobotConnectionOptions, _args: &ArgMatches) -> Result<(), CommandError> {
     let mut brain = v5_core::connection::connect_to_brain(options).await?;
-    brain.set_competition_state(CompetitionState::Disabled, 0).await?;
+    brain
+        .set_competition_state(CompetitionState::Disabled, 0)
+        .await?;
     Ok(())
 }
 

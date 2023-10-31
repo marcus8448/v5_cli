@@ -2,6 +2,8 @@ use std::fmt::Debug;
 
 use thiserror::Error;
 
+use crate::connection::Nack;
+
 #[derive(Error, Debug)]
 pub enum ConnectionError {
     #[error("no v5 device found!")]
@@ -10,8 +12,24 @@ pub enum ConnectionError {
     NoBluetoothAdapters,
     #[error("bluetooth error")]
     BluetoothError(#[from] btleplug::Error),
+    #[error("serial port error")]
+    SerialPortError(#[from] tokio_serial::Error),
+    #[error("serial port error")]
+    IoError(#[from] std::io::Error),
     #[error("invalid PIN")]
     InvalidPIN,
+}
+
+#[derive(Error, Debug)]
+pub enum CommunicationError {
+    #[error("nack received: `{0}`")]
+    NegativeAcknowledgement(Nack),
+    #[error("i/o error")]
+    IoError(#[from] std::io::Error),
+    #[error("timed out")]
+    TimedOut,
+    #[error("disconnected")]
+    Eof,
 }
 
 #[derive(Error, Debug)]
@@ -20,11 +38,13 @@ pub enum CommandError {
     InvalidSubcommand,
     #[error("missing argument `{0}`")]
     InvalidArgument(&'static str),
-    #[error("robot connection error: {0}")]
+    #[error("connection error: {0}")]
     ConnectionError(#[from] ConnectionError),
-    #[error("robot communications error: {0}")]
-    CommunicationError(#[from] std::io::Error),
-    #[error("robot communications parsing error: {0}")]
+    #[error("communications error: {0}")]
+    CommunicationError(#[from] CommunicationError),
+    #[error("i/o error")]
+    IoError(#[from] std::io::Error),
+    #[error("communications parsing error: {0}")]
     ParseError(#[from] ParseError),
 }
 
@@ -36,18 +56,4 @@ pub enum ParseError {
     InvalidName(String),
     #[error("invalid id {0}")]
     InvalidId(u32),
-}
-
-impl From<ParseError> for std::io::Error {
-    fn from(value: ParseError) -> Self {
-        match value {
-            ParseError::MissingKey(key) => std::io::Error::new(std::io::ErrorKind::NotFound, key),
-            ParseError::InvalidName(name) => {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, name)
-            }
-            ParseError::InvalidId(id) => {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, id.to_string())
-            }
-        }
-    }
 }

@@ -8,8 +8,7 @@ use bitflags::bitflags;
 
 use crate::brain::Brain;
 use crate::brain::filesystem::Vid;
-use crate::buffer::{RawRead, RawWrite};
-use crate::error::ParseError;
+use crate::error::{CommandError, CommunicationError, ParseError};
 
 const JAN_01_2000: Duration = Duration::from_secs(946684800);
 
@@ -38,7 +37,7 @@ impl KernelVariable {
         }
     }
 
-    pub(crate) fn get_name(&self) -> &'static str {
+    pub fn get_name(&self) -> &'static str {
         (*self).into()
     }
 }
@@ -82,7 +81,7 @@ impl Display for Product {
 }
 
 impl Product {
-    fn parse(id: u8, flag: u8) -> std::result::Result<Self, ParseError> {
+    fn parse(id: u8, flag: u8) -> Result<Self, ParseError> {
         match id {
             0x10 => Ok(Self::Brain),
             0x11 => Ok(Self::Controller {
@@ -123,7 +122,7 @@ pub enum Channel {
 impl TryFrom<u8> for Channel {
     type Error = ParseError;
 
-    fn try_from(id: u8) -> std::result::Result<Self, Self::Error> {
+    fn try_from(id: u8) -> Result<Self, Self::Error> {
         match id {
             0 => Ok(Self::Pit),
             1 => Ok(Self::Download),
@@ -183,7 +182,7 @@ bitflags! {
 }
 
 impl Brain {
-    pub async fn get_system_version(&mut self) -> Result<SystemVersion, std::io::Error> {
+    pub async fn get_system_version(&mut self) -> Result<SystemVersion, CommandError> {
         let mut response = self.send_simple(0xA4).await?;
 
         Ok(SystemVersion {
@@ -196,13 +195,18 @@ impl Brain {
         })
     }
 
-    pub async fn get_product(&mut self) -> Result<String, std::io::Error> {
+    pub async fn get_product(&mut self) -> Result<String, CommunicationError> {
         let mut response = self.send_simple(0x21).await?;
 
-        Ok(response.read_str(response.get_all().len()))
+        Ok(response.read_str(response.len()))
     }
 
-    pub async fn execute_program(&mut self, vid: Vid, flags: ExecutionFlags, filename: &str) -> Result<(), std::io::Error> {
+    pub async fn execute_program(
+        &mut self,
+        vid: Vid,
+        flags: ExecutionFlags,
+        filename: &str,
+    ) -> Result<(), CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + 24, 0x18);
 
         packet.write_u8(vid.into());
@@ -213,7 +217,7 @@ impl Brain {
         Ok(())
     }
 
-    pub async fn get_system_status(&mut self) -> Result<SystemStatus, std::io::Error> {
+    pub async fn get_system_status(&mut self) -> Result<SystemStatus, CommunicationError> {
         let mut response = self.packet(0, 0x22).send().await?;
         response.skip(1);
         let system = Version {
@@ -240,7 +244,11 @@ impl Brain {
         Ok(SystemStatus::new(system, cpu0, cpu1, touch, id))
     }
 
-    pub async fn send_user_communications(&mut self, channel: Channel, payload: &[u8]) -> Result<(), std::io::Error> {
+    pub async fn send_user_communications(
+        &mut self,
+        channel: Channel,
+        payload: &[u8],
+    ) -> Result<(), CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + payload.len(), 0x27);
 
         packet.write_u8(channel.into());
@@ -251,24 +259,35 @@ impl Brain {
         Ok(())
     }
 
-    pub async fn read_user_communications(&mut self, channel: Channel, len: u8) -> Result<Box<[u8]>, std::io::Error> {
+    pub async fn read_user_communications(
+        &mut self,
+        channel: Channel,
+        len: u8,
+    ) -> Result<Box<[u8]>, CommunicationError> {
         assert!(len > 0);
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>(), 0x27);
 
         packet.write_u8(channel.into());
         packet.write_u8(len);
 
-        Ok(packet.send().await?.get_data())
+        Ok(packet.send().await?.consume())
     }
 
-    pub async fn get_kernel_variable(&mut self, variable: KernelVariable) -> Result<String, std::io::Error> {
+    pub async fn get_kernel_variable(
+        &mut self,
+        variable: KernelVariable,
+    ) -> Result<String, CommunicationError> {
         let mut packet = self.packet(variable.get_name().len() + 1, 0x2E);
         packet.write_str(variable.get_name(), variable.get_name().len() + 1);
 
         Ok(packet.send().await?.read_str(variable.get_max_len()))
     }
 
-    pub async fn set_kernel_variable(&mut self, variable: KernelVariable, value: &str) -> Result<(), std::io::Error> {
+    pub async fn set_kernel_variable(
+        &mut self,
+        variable: KernelVariable,
+        value: &str,
+    ) -> Result<(), CommunicationError> {
         assert!(value.len() < variable.get_max_len());
         let mut packet = self.packet(variable.get_name().len() + 1 + value.len() + 1, 0x2F);
         packet.write_str(variable.get_name(), variable.get_name().len() + 1);

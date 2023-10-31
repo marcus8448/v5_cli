@@ -6,8 +6,8 @@ use bitflags::bitflags;
 
 use crate::brain::Brain;
 use crate::brain::system::Channel;
-use crate::buffer::{OwnedBuffer, RawRead, RawWrite};
-use crate::error::ParseError;
+use crate::buffer::ReceivingBuffer;
+use crate::error::{CommunicationError, ParseError};
 
 pub struct UploadParameters {
     pub max_packet_size: u16,
@@ -170,7 +170,7 @@ impl TryFrom<&str> for FileType {
 
 pub struct FileTransfer<'a> {
     brain: &'a mut Brain,
-    pub parameters: UploadParameters
+    pub parameters: UploadParameters,
 }
 
 bitflags! {
@@ -187,7 +187,11 @@ bitflags! {
 }
 
 impl Brain {
-    pub async fn get_directory_count(&mut self, vid: Vid, option: FileFlags) -> Result<u16, std::io::Error> {
+    pub async fn get_directory_count(
+        &mut self,
+        vid: Vid,
+        option: FileFlags,
+    ) -> Result<u16, CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>(), 0x16);
 
         packet.write_u8(vid.into());
@@ -197,7 +201,11 @@ impl Brain {
         Ok(response.read_u16())
     }
 
-    pub async fn get_file_metadata_by_index(&mut self, index: u8, flags: FileFlags) -> Result<FileMetadata, std::io::Error> {
+    pub async fn get_file_metadata_by_index(
+        &mut self,
+        index: u8,
+        flags: FileFlags,
+    ) -> Result<FileMetadata, CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>(), 0x17);
 
         packet.write_u8(index);
@@ -206,7 +214,12 @@ impl Brain {
         Ok(parse_metadata(packet.send().await?))
     }
 
-    pub async fn get_file_metadata_by_name(&mut self, vid: Vid, flags: FileFlags, filename: &str) -> Result<FileMetadata, std::io::Error> {
+    pub async fn get_file_metadata_by_name(
+        &mut self,
+        vid: Vid,
+        flags: FileFlags,
+        filename: &str,
+    ) -> Result<FileMetadata, CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + 24, 0x19);
 
         packet.write_u8(vid.into());
@@ -216,9 +229,26 @@ impl Brain {
         Ok(parse_metadata(packet.send().await?))
     }
 
-    pub async fn set_file_metadata(&mut self, vid: Vid, filename: &str, flags: FileFlags, address: u32, file_type: &str,
-                                   timestamp: u32, version: u32) -> Result<(), std::io::Error> {
-        let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + size_of::<u32>() + 4 + size_of::<u32>() + size_of::<u32>() + 24, 0x1A);
+    pub async fn set_file_metadata(
+        &mut self,
+        vid: Vid,
+        filename: &str,
+        flags: FileFlags,
+        address: u32,
+        file_type: &str,
+        timestamp: u32,
+        version: u32,
+    ) -> Result<(), CommunicationError> {
+        let mut packet = self.packet(
+            size_of::<u8>()
+                + size_of::<u8>()
+                + size_of::<u32>()
+                + 4
+                + size_of::<u32>()
+                + size_of::<u32>()
+                + 24,
+            0x1A,
+        );
 
         packet.write_u8(vid.into());
         packet.write_u8(flags.bits());
@@ -233,7 +263,12 @@ impl Brain {
     }
 
     // send FT complete
-    pub async fn delete_file(&mut self, vid: Vid, flags: DeleteFlags, filename: &str) -> Result<(), std::io::Error> {
+    pub async fn delete_file(
+        &mut self,
+        vid: Vid,
+        flags: DeleteFlags,
+        filename: &str,
+    ) -> Result<(), CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + 24, 0x1B);
 
         packet.write_u8(vid.into());
@@ -244,7 +279,12 @@ impl Brain {
         Ok(())
     }
 
-    pub async fn get_program_file_slot(&mut self, vid: Vid, flags: FileFlags, filename: &str) -> Result<u8, std::io::Error> {
+    pub async fn get_program_file_slot(
+        &mut self,
+        vid: Vid,
+        flags: FileFlags,
+        filename: &str,
+    ) -> Result<u8, CommunicationError> {
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + 24, 0x1C);
 
         packet.write_u8(vid.into());
@@ -255,13 +295,23 @@ impl Brain {
         Ok(response.read_u8())
     }
 
-    pub async fn file_transfer_initialize<'a>(&'a mut self, direction: TransferDirection,
-                                              target: TransferTarget, vid: Vid, overwrite: bool, length: u32,
-                                              address: u32, crc: u32, version: u32, file_type: FileType, name: &str,
-                                              timestamp: SystemTime) -> Result<FileTransfer<'a>, std::io::Error> {
+    pub async fn file_transfer_initialize<'a>(
+        &'a mut self,
+        direction: TransferDirection,
+        target: TransferTarget,
+        vid: Vid,
+        overwrite: bool,
+        length: u32,
+        address: u32,
+        crc: u32,
+        version: u32,
+        file_type: FileType,
+        name: &str,
+        timestamp: SystemTime,
+    ) -> Result<FileTransfer<'a>, CommunicationError> {
         let mut packet = self.packet(
             size_of::<u8>() * 4 + size_of::<u32>() * 3 + 4 + size_of::<u32>() * 2 + 24,
-            0x11
+            0x11,
         );
 
         packet.write_u8(direction.into());
@@ -276,20 +326,20 @@ impl Brain {
         packet.write_u32(version);
         packet.write_str(name, 24);
 
-        let mut response: OwnedBuffer = packet.send().await?;
+        let mut response: ReceivingBuffer = packet.send().await?;
         Ok(FileTransfer {
             brain: self,
-            parameters: UploadParameters { 
-                max_packet_size: response.read_u16(), 
-                file_size: response.read_u32(), 
-                crc: response.read_u32(), 
-            } 
+            parameters: UploadParameters {
+                max_packet_size: response.read_u16(),
+                file_size: response.read_u32(),
+                crc: response.read_u32(),
+            },
         })
     }
 }
 
 impl<'a> FileTransfer<'a> {
-    pub async fn set_channel(&mut self, channel: Channel) -> Result<(), std::io::Error> {
+    pub async fn set_channel(&mut self, channel: Channel) -> Result<(), CommunicationError> {
         let mut packet = self.brain.packet(5, 0x10);
         packet.write_u8(1);
         packet.write_u8(channel.into());
@@ -297,7 +347,7 @@ impl<'a> FileTransfer<'a> {
         Ok(())
     }
 
-    pub async fn set_link(&mut self, name: &str, vid: Vid) -> Result<(), std::io::Error> {
+    pub async fn set_link(&mut self, name: &str, vid: Vid) -> Result<(), CommunicationError> {
         let mut packet = self.brain.packet(1 + 1 + 24, 0x15);
 
         packet.write_u8(vid.into());
@@ -308,13 +358,17 @@ impl<'a> FileTransfer<'a> {
         Ok(())
     }
 
-    pub async fn write(&mut self, slice: &[u8], address: u32) -> Result<(), std::io::Error> {
+    pub async fn write(&mut self, slice: &[u8], address: u32) -> Result<(), CommunicationError> {
         let mut packet = self.brain.packet(
-            size_of::<u32>() + slice.len() + if slice.len() % 4 != 0 {
-                4 - (slice.len() % 4)
-            } else {
-                0
-            }, 0x13);
+            size_of::<u32>()
+                + slice.len()
+                + if slice.len() % 4 != 0 {
+                    4 - (slice.len() % 4)
+                } else {
+                    0
+                },
+            0x13,
+        );
 
         packet.write_u32(address);
         packet.write_raw(slice);
@@ -325,7 +379,7 @@ impl<'a> FileTransfer<'a> {
         Ok(())
     }
 
-    pub async fn read(&mut self, len: u16, address: u32) -> Result<Box<[u8]>, std::io::Error> {
+    pub async fn read(&mut self, len: u16, address: u32) -> Result<Box<[u8]>, CommunicationError> {
         let mut packet = self.brain.packet(size_of::<u32>() + size_of::<u16>(), 0x14);
 
         packet.write_u32(address);
@@ -338,7 +392,7 @@ impl<'a> FileTransfer<'a> {
         Ok(val)
     }
 
-    pub async fn complete(self, upload_action: UploadAction) -> Result<(), std::io::Error> {
+    pub async fn complete(self, upload_action: UploadAction) -> Result<(), CommunicationError> {
         let mut packet = self.brain.packet(1, 0x12);
         packet.write_u8(upload_action.into());
         let _response = packet.send().await?;
@@ -346,7 +400,7 @@ impl<'a> FileTransfer<'a> {
     }
 }
 
-fn parse_metadata(mut response: OwnedBuffer) -> FileMetadata {
+fn parse_metadata(mut response: ReceivingBuffer) -> FileMetadata {
     FileMetadata {
         vid: Vid::from(response.read_u8()),
         size: response.read_u32(),

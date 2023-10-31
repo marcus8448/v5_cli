@@ -7,8 +7,6 @@ use tokio::net::TcpStream;
 use crate::connection::SerialConnection;
 use crate::error::ConnectionError;
 
-pub const HEADER: u32 = 0xc1a04d;
-
 pub struct SharedConnection {
     stream: TcpStream,
 }
@@ -24,7 +22,7 @@ impl SerialConnection for SharedConnection {
                     #[cfg(windows)]
                     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 }
-                Err(err) => return Err(err)
+                Err(err) => return Err(err),
             }
         }
     }
@@ -38,7 +36,7 @@ impl SerialConnection for SharedConnection {
         let mut buf = [0_u8; 128];
         while let Ok(len) = self.stream.try_read(&mut buf) {
             if len == 0 {
-                break
+                break;
             }
         }
         Ok(())
@@ -47,7 +45,7 @@ impl SerialConnection for SharedConnection {
     async fn try_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         return match self.stream.try_read(buf) {
             Ok(len) => Ok(len),
-            Err(err) => Err(err)
+            Err(err) => Err(err),
         };
     }
 
@@ -57,9 +55,7 @@ impl SerialConnection for SharedConnection {
 
             match self.stream.read_exact(buf).await {
                 Ok(_) => return Ok(()),
-                Err(err) if err.kind() == WouldBlock => {
-                    continue
-                }
+                Err(err) if err.kind() == WouldBlock => continue,
                 Err(err) => {
                     return Err(err);
                 }
@@ -69,16 +65,16 @@ impl SerialConnection for SharedConnection {
 
     async fn try_read_one(&mut self) -> std::io::Result<u8> {
         let mut buf = [0_u8; 1];
-        loop {
-            return match self.stream.try_read(&mut buf) {
-                Ok(1) => Ok(buf[0]),
-                Ok(_) => Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof")),
-                Err(err) => Err(err)
-            };
-        }
+        return match self.stream.try_read(&mut buf) {
+            Ok(1) => Ok(buf[0]),
+            Ok(_) => Err(std::io::ErrorKind::UnexpectedEof.into()),
+            Err(err) => Err(err),
+        };
     }
 }
 
 pub(crate) async fn open_connection(port: u16) -> Result<SharedConnection, ConnectionError> {
-    Ok(SharedConnection { stream: TcpStream::connect(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)).await.unwrap() })
+    Ok(SharedConnection {
+        stream: TcpStream::connect(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)).await?,
+    })
 }

@@ -2,7 +2,10 @@ use std::io::{Read, Write};
 use std::io::ErrorKind::WouldBlock;
 use std::time::Duration;
 
-use tokio_serial::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, SerialPortBuilderExt, SerialPortType, SerialStream};
+use tokio_serial::{
+    ClearBuffer, DataBits, FlowControl, Parity, SerialPort, SerialPortBuilderExt, SerialPortType,
+    SerialStream,
+};
 
 use crate::connection::SerialConnection;
 use crate::error::ConnectionError;
@@ -23,7 +26,7 @@ impl SerialConnection for SerialPortConnection {
                     #[cfg(windows)]
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
-                Err(err) => return Err(err)
+                Err(err) => return Err(err),
             }
         }
     }
@@ -51,7 +54,7 @@ impl SerialConnection for SerialPortConnection {
                     #[cfg(windows)]
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
-                Err(err) => return Err(err)
+                Err(err) => return Err(err),
             };
         }
     }
@@ -74,7 +77,7 @@ impl SerialConnection for SerialPortConnection {
                     #[cfg(windows)]
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
-                Err(err) => return Err(err)
+                Err(err) => return Err(err),
             };
         }
     }
@@ -87,52 +90,41 @@ pub(crate) fn find_ports(_port: Option<String>) -> Result<(String, String), Conn
 
     let mut unknown = Vec::new();
 
-    for port in tokio_serial::available_ports().expect("Failed to obtain list of ports!") {
-        if let SerialPortType::UsbPort(info) = &port.port_type {
-            if info.pid == 0x0501 && info.vid == 0x2888 {
-                if let Some(product) = &info.product {
-                    let product = product.to_lowercase();
-                    if product.contains("user") {
-                        &mut user
-                    } else if product.contains("system") || product.contains("communications") {
-                        &mut system
-                    } else if product.contains("controller") {
-                        &mut controller
-                    } else {
-                        &mut unknown
+    let ports = tokio_serial::available_ports();
+    match ports {
+        Ok(ports) => {
+            for port in ports {
+                if let SerialPortType::UsbPort(info) = &port.port_type {
+                    if info.pid == 0x0501 && info.vid == 0x2888 {
+                        if let Some(product) = &info.product {
+                            let product = product.to_lowercase();
+                            if product.contains("user") {
+                                &mut user
+                            } else if product.contains("system")
+                                || product.contains("communications")
+                            {
+                                &mut system
+                            } else if product.contains("controller") {
+                                &mut controller
+                            } else {
+                                &mut unknown
+                            }
+                            .push(port.port_name.clone())
+                        }
                     }
-                    .push(port.port_name.clone())
                 }
             }
-        }
-    }
 
-    if system.is_empty() || user.is_empty() {
-        if unknown.len() >= 2 {
-            return Ok((unknown[0].clone(), unknown[1].clone()));
-        }
-        return Err(ConnectionError::DeviceNotFound);
-    }
-
-    Ok((system[0].clone(), user[0].clone()))
-}
-
-pub fn print_out_ports() {
-    for p in tokio_serial::available_ports().expect("Failed to obtain list of ports!") {
-        if let SerialPortType::UsbPort(info) = p.port_type {
-            if info.pid == 0x0501 && info.vid == 0x2888 {
-                println!(
-                    "{}: {} {} ({} by {})",
-                    p.port_name,
-                    info.pid,
-                    info.vid,
-                    info.product.unwrap_or_default(),
-                    info.manufacturer.unwrap_or_default()
-                );
+            if system.is_empty() || user.is_empty() {
+                if unknown.len() >= 2 {
+                    return Ok((unknown[0].clone(), unknown[1].clone()));
+                }
+                return Err(ConnectionError::DeviceNotFound);
             }
-        } else {
-            println!("{}: {:?}", p.port_name, p.port_type);
+
+            Ok((system[0].clone(), user[0].clone()))
         }
+        Err(err) => Err(ConnectionError::SerialPortError(err)),
     }
 }
 
@@ -145,8 +137,8 @@ pub(crate) async fn open_connection(port: String) -> Result<SerialPortConnection
         .open_native_async()
         .expect("Failed to connect to robot!");
 
-    serial_port.write_data_terminal_ready(true).unwrap();
+    serial_port.write_data_terminal_ready(true).expect("dtr");
     #[cfg(unix)]
-    serial_port.set_exclusive(false).unwrap();
+    serial_port.set_exclusive(false).expect("set not exclusive");
     Ok(SerialPortConnection { serial_port })
 }

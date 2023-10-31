@@ -43,11 +43,11 @@ pub(crate) async fn connect_to_robot(
 ) -> Result<(btleplug::platform::Peripheral, Characteristics), ConnectionError> {
     let mac_address =
         mac_address.map(|address| BDAddr::from_str(&address).expect("Invalid MAC address"));
-    let mut pin = pin.as_deref().map(parse_pin);
+    let pin = pin.as_deref().map(parse_pin);
 
     let manager = match btleplug::platform::Manager::new().await {
         Ok(man) => man,
-        Err(_) => return Err(ConnectionError::NoBluetoothAdapters)
+        Err(_) => return Err(ConnectionError::NoBluetoothAdapters),
     };
     let adapters = manager.adapters().await?;
 
@@ -89,15 +89,15 @@ pub(crate) async fn connect_to_robot(
             .as_millis()
     );
 
-    if device.is_none() {
-        return Err(ConnectionError::DeviceNotFound);
-    }
+    let peripheral = match device {
+        None => return Err(ConnectionError::DeviceNotFound),
+        Some(dev) => dev,
+    };
 
-    let peripheral = device.unwrap();
     if !peripheral.is_connected().await? {
         peripheral.connect().await?;
     } else {
-        warn!("Bluetooth peripheral already connected");
+        warn!("bluetooth peripheral already connected?");
     }
 
     peripheral.discover_services().await?;
@@ -121,11 +121,11 @@ pub(crate) async fn connect_to_robot(
         }
     }
 
-    let tx_data = tx_data.unwrap();
-    let rx_data = rx_data.unwrap();
-    let tx_user = tx_user.unwrap();
-    let rx_user = rx_user.unwrap();
-    let code = code.unwrap();
+    let code = code.expect("char: PIN");
+    let tx_data = tx_data.expect("char: tx data");
+    let rx_data = rx_data.expect("char: rx data");
+    let tx_user = tx_user.expect("char: tx user");
+    let rx_user = rx_user.expect("char: rx user");
 
     let vec = peripheral.read(&code).await?;
     if u32::from_be_bytes(vec[0..4].try_into().unwrap()) == 0xdeadface {
@@ -135,18 +135,21 @@ pub(crate) async fn connect_to_robot(
             .await?;
     }
 
-    while pin.is_none() {
-        println!("Please enter the PIN shown on the V5 brain");
-        let mut str = String::new();
-        std::io::stdin()
-            .read_line(&mut str)
-            .expect("Failed to read stdin");
-        if str.len() >= 4 && u16::from_str(&str[..4]).is_ok() {
-            pin = Some(parse_pin(&str[..4]));
-        }
-    }
-
-    let pin = pin.unwrap();
+    let pin = match pin {
+        None => loop {
+            println!("Please enter the PIN shown on the V5 brain");
+            let mut str = String::new();
+            std::io::stdin()
+                .read_line(&mut str)
+                .expect("Failed to read stdin");
+            if (str.len() == 4 || (str.len() == 5 && str.chars().nth(4).unwrap() == '\n'))
+                && u16::from_str(&str[..4]).is_ok()
+            {
+                break parse_pin(&str[..4]);
+            }
+        },
+        Some(pin) => pin,
+    };
 
     peripheral
         .write(&code, &pin, WriteType::WithoutResponse)
@@ -316,7 +319,7 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
                 Ok(n) => {
                     buf = &mut buf[n..];
                 }
-                Err(e) => return Err(e)
+                Err(e) => return Err(e),
             }
         }
         if !buf.is_empty() {
@@ -345,7 +348,7 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
 fn parse_pin(str: &str) -> [u8; 4] {
     assert_eq!(str.len(), 4);
     let mut chars = str.chars();
-    u16::from_str(&str).expect("Invalid PIN!");
+    u16::from_str(str).expect("Invalid PIN!");
 
     [
         chars.next().unwrap().to_digit(10).unwrap() as u8,

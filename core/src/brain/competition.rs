@@ -1,6 +1,5 @@
 use crate::brain::Brain;
-use crate::buffer::RawWrite;
-use crate::error::ParseError;
+use crate::error::{CommunicationError, ParseError};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
@@ -30,7 +29,11 @@ impl From<CompetitionState> for u8 {
 }
 
 impl Brain {
-    pub async fn set_competition_state(&mut self, state: CompetitionState, unknown: u32) -> Result<(), std::io::Error> {
+    pub async fn set_competition_state(
+        &mut self,
+        state: CompetitionState,
+        unknown: u32,
+    ) -> Result<(), CommunicationError> {
         let mut packet = self.packet(5, 0x2E);
         packet.write_u8(state.into());
         packet.write_u32(unknown);

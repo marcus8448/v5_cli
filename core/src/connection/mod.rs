@@ -1,12 +1,14 @@
+use std::fmt::{Display, Formatter};
+
 use crate::brain::Brain;
 use crate::connection::bluetooth::DualSubscribedBluetoothConnection;
 
-pub mod bluetooth;
-pub mod serial;
-pub mod daemon;
+mod bluetooth;
+mod daemon;
+mod serial;
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Nack {
     General = 0xFF,
     InvalidCrc = 0xCE,
@@ -48,6 +50,12 @@ impl TryFrom<u8> for Nack {
     }
 }
 
+impl Display for Nack {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 pub enum RobotConnectionOptions {
     Serial {
         port: Option<String>,
@@ -59,17 +67,17 @@ pub enum RobotConnectionOptions {
     },
     Daemon {
         user_port: u16,
-        system_port: u16
+        system_port: u16,
     },
 }
 
-pub async fn connect_to_brain(options: RobotConnectionOptions) -> Result<Brain, crate::error::ConnectionError> {
+pub async fn connect_to_brain(
+    options: RobotConnectionOptions,
+) -> Result<Brain, crate::error::ConnectionError> {
     match options {
         RobotConnectionOptions::Serial { port } => {
             let (system, _) = serial::find_ports(port)?;
-            Ok(Brain::new(Box::new(
-                serial::open_connection(system).await?,
-            )))
+            Ok(Brain::new(Box::new(serial::open_connection(system).await?)))
         }
         RobotConnectionOptions::Bluetooth { mac_address, pin } => {
             match bluetooth::connect_to_robot(mac_address, pin).await {
@@ -77,25 +85,26 @@ pub async fn connect_to_brain(options: RobotConnectionOptions) -> Result<Brain, 
                     DualSubscribedBluetoothConnection::create(
                         characteristics.tx_data,
                         characteristics.rx_data,
-                        peripheral)
-                        .await
+                        peripheral,
+                    )
+                    .await,
                 ))),
                 Err(err) => Err(err),
             }
         }
-        RobotConnectionOptions::Daemon { system_port, .. } => {
-            Ok(Brain::new(Box::new(daemon::open_connection(system_port).await?)))
-        }
+        RobotConnectionOptions::Daemon { system_port, .. } => Ok(Brain::new(Box::new(
+            daemon::open_connection(system_port).await?,
+        ))),
     }
 }
 
-pub async fn connect_to_user(options: RobotConnectionOptions) -> Result<Box<dyn SerialConnection + Send>, crate::error::ConnectionError> {
+pub async fn connect_to_user(
+    options: RobotConnectionOptions,
+) -> Result<Box<dyn SerialConnection + Send>, crate::error::ConnectionError> {
     match options {
         RobotConnectionOptions::Serial { port } => {
             let (_, user) = serial::find_ports(port)?;
-            Ok(Box::new(
-                serial::open_connection(user).await?,
-            ))
+            Ok(Box::new(serial::open_connection(user).await?))
         }
         RobotConnectionOptions::Bluetooth { mac_address, pin } => {
             match bluetooth::connect_to_robot(mac_address, pin).await {
@@ -104,7 +113,8 @@ pub async fn connect_to_user(options: RobotConnectionOptions) -> Result<Box<dyn 
                         characteristics.tx_user,
                         characteristics.rx_user,
                         peripheral,
-                    ).await,
+                    )
+                    .await,
                 )),
                 Err(err) => Err(err),
             }
@@ -115,37 +125,53 @@ pub async fn connect_to_user(options: RobotConnectionOptions) -> Result<Box<dyn 
     }
 }
 
-pub async fn connect_to_all(options: RobotConnectionOptions) -> Result<(Box<dyn SerialConnection + Send>, Box<dyn SerialConnection + Send>), crate::error::ConnectionError> {
+pub async fn connect_to_all(
+    options: RobotConnectionOptions,
+) -> Result<
+    (
+        Box<dyn SerialConnection + Send>,
+        Box<dyn SerialConnection + Send>,
+    ),
+    crate::error::ConnectionError,
+> {
     match options {
         RobotConnectionOptions::Serial { port } => {
             let (system, user) = serial::find_ports(port)?;
-            Ok((Box::new(
-                serial::open_connection(system).await?,
-            ), Box::new(
-                serial::open_connection(user).await?,
-            )))
+            Ok((
+                Box::new(serial::open_connection(system).await?),
+                Box::new(serial::open_connection(user).await?),
+            ))
         }
         RobotConnectionOptions::Bluetooth { mac_address, pin } => {
             match bluetooth::connect_to_robot(mac_address, pin).await {
-                Ok((peripheral, characteristics)) => Ok((Box::new(
-                    DualSubscribedBluetoothConnection::create(
-                        characteristics.tx_data,
-                        characteristics.rx_data,
-                        peripheral.clone(),
-                    ).await,
-                ), Box::new(
-                    DualSubscribedBluetoothConnection::create(
-                        characteristics.tx_user,
-                        characteristics.rx_user,
-                        peripheral,
-                    ).await,
-                ))),
+                Ok((peripheral, characteristics)) => Ok((
+                    Box::new(
+                        DualSubscribedBluetoothConnection::create(
+                            characteristics.tx_data,
+                            characteristics.rx_data,
+                            peripheral.clone(),
+                        )
+                        .await,
+                    ),
+                    Box::new(
+                        DualSubscribedBluetoothConnection::create(
+                            characteristics.tx_user,
+                            characteristics.rx_user,
+                            peripheral,
+                        )
+                        .await,
+                    ),
+                )),
                 Err(err) => Err(err),
             }
         }
-        RobotConnectionOptions::Daemon { user_port, system_port } => {
-            Ok((Box::new(daemon::open_connection(system_port).await?), Box::new(daemon::open_connection(user_port).await?)))
-        }
+        RobotConnectionOptions::Daemon {
+            user_port,
+            system_port,
+        } => Ok((
+            Box::new(daemon::open_connection(system_port).await?),
+            Box::new(daemon::open_connection(user_port).await?),
+        )),
     }
 }
 

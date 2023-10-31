@@ -2,10 +2,11 @@ use std::mem::size_of;
 use std::time::{Duration, SystemTime};
 
 use crc::{Crc, CRC_16_XMODEM};
-use log::{debug, error, warn};
+use log::{debug, warn};
 
-use crate::buffer::{OwnedBuffer, RawWrite};
+use crate::buffer::ReceivingBuffer;
 use crate::connection::{Nack, SerialConnection};
+use crate::error::CommunicationError;
 
 pub mod competition;
 pub mod filesystem;
@@ -19,7 +20,7 @@ const EXT_PACKET_ID: u8 = 0x56;
 const TIMEOUT: Duration = Duration::from_millis(500);
 
 pub struct Brain {
-    connection: Box<dyn SerialConnection + Send>
+    connection: Box<dyn SerialConnection + Send>,
 }
 
 impl Brain {
@@ -31,7 +32,7 @@ impl Brain {
         Packet::new(packet_id, content_len, self)
     }
 
-    pub async fn send_raw_packet(&mut self, data: &[u8]) -> Result<(), std::io::Error> {
+    pub async fn send_raw_packet(&mut self, data: &[u8]) -> Result<(), CommunicationError> {
         assert_eq!(CRC16.checksum(data), 0);
 
         self.connection.clear().await?;
@@ -40,7 +41,7 @@ impl Brain {
         Ok(())
     }
 
-    pub async fn find_packet_header(&mut self) -> Result<bool, std::io::Error> {
+    pub async fn find_packet_header(&mut self) -> Result<bool, CommunicationError> {
         let mut value = 0;
         let mut i = 0;
         let time = SystemTime::now();
@@ -63,7 +64,8 @@ impl Brain {
                     if SystemTime::now()
                         .duration_since(time)
                         .unwrap_or(Duration::ZERO)
-                        > TIMEOUT {
+                        > TIMEOUT
+                    {
                         return Ok(false);
                     }
                 }
@@ -76,15 +78,14 @@ impl Brain {
         Ok(true)
     }
 
-    pub async fn receive_raw_packet(&mut self, id: u8) -> Result<OwnedBuffer, std::io::Error> {
+    pub async fn receive_raw_packet(
+        &mut self,
+        id: u8,
+    ) -> Result<ReceivingBuffer, CommunicationError> {
         match self.find_packet_header().await {
             Ok(true) => {}
-            Ok(false) => {
-                return Err(std::io::ErrorKind::TimedOut.into())
-            }
-            _ => {
-                return Err(std::io::ErrorKind::UnexpectedEof.into())
-            }
+            Ok(false) => return Err(CommunicationError::TimedOut),
+            _ => return Err(CommunicationError::Eof),
         };
 
         let mut payload = Vec::with_capacity(64);
@@ -114,17 +115,13 @@ impl Brain {
         assert_eq!(CRC16.checksum(&payload), 0);
 
         if let Ok(nack) = Nack::try_from(payload[start + 1]) {
-            error!("NACK: {:?} ({})", &nack, payload[start + 1]);
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "NACK"));
+            return Err(CommunicationError::NegativeAcknowledgement(nack));
         }
 
-        Ok(OwnedBuffer::new(payload.into_boxed_slice(), start + 2))
+        Ok(ReceivingBuffer::new(payload.into_boxed_slice(), start + 2))
     }
 
-    pub async fn send_simple(
-        &mut self,
-        id: u8
-    ) -> Result<OwnedBuffer, std::io::Error> {
+    pub async fn send_simple(&mut self, id: u8) -> Result<ReceivingBuffer, CommunicationError> {
         let mut buffer = [0_u8; 4 + 1 + /*CRC*/ size_of::<u16>()];
         buffer[0..PACKET_HEADER.len()].copy_from_slice(PACKET_HEADER);
         buffer[PACKET_HEADER.len()] = id;
@@ -136,12 +133,8 @@ impl Brain {
         let time = SystemTime::now();
         match self.find_packet_header().await {
             Ok(true) => {}
-            Ok(false) => {
-                return Err(std::io::ErrorKind::TimedOut.into())
-            }
-            _ => {
-                return Err(std::io::ErrorKind::UnexpectedEof.into())
-            }
+            Ok(false) => return Err(CommunicationError::TimedOut),
+            Err(err) => return Err(err),
         };
 
         debug!(
@@ -167,7 +160,7 @@ impl Brain {
 
         assert_eq!(command, id);
 
-        Ok(OwnedBuffer::new(payload.into_boxed_slice(), start + 1))
+        Ok(ReceivingBuffer::new(payload.into_boxed_slice(), start + 1))
     }
 }
 
@@ -175,7 +168,7 @@ pub struct Packet<'a> {
     packet_id: u8,
     buffer: Box<[u8]>,
     pos: usize,
-    brain: &'a mut Brain
+    brain: &'a mut Brain,
 }
 
 impl<'a> Packet<'a> {
@@ -184,7 +177,12 @@ impl<'a> Packet<'a> {
         let meta_len = /*header*/ PACKET_HEADER.len() + /*ext id*/ 1 + /*command id*/  1 + if /*len*/ content_len < 0x80 { 1 } else { 2 };
         let size = meta_len + content_len + /*CRC*/ size_of::<u16>();
 
-        let mut buffer = Self { packet_id, buffer: vec![0_u8; size].into_boxed_slice(), pos: 0, brain };
+        let mut buffer = Self {
+            packet_id,
+            buffer: vec![0_u8; size].into_boxed_slice(),
+            pos: 0,
+            brain,
+        };
 
         buffer.write_raw(PACKET_HEADER);
 
@@ -201,102 +199,103 @@ impl<'a> Packet<'a> {
         buffer
     }
 
-    pub async fn send(mut self) -> Result<OwnedBuffer, std::io::Error> {
+    pub async fn send(mut self) -> Result<ReceivingBuffer, CommunicationError> {
         assert_eq!(self.buffer.len() - size_of::<u16>(), self.pos);
 
         self.write_raw(&CRC16.checksum(&self.buffer[..self.pos]).to_be_bytes());
-        let mut failed = 0;
+        let mut failed: u8 = 0;
         loop {
             self.brain.send_raw_packet(&self.buffer).await?;
             match self.brain.receive_raw_packet(self.packet_id).await {
                 Ok(data) => return Ok(data),
-                Err(err) if err.kind() == std::io::ErrorKind::TimedOut => {},
-                Err(err) => return Err(err)
+                Err(err) => match err {
+                    CommunicationError::TimedOut => {}
+                    _ => return Err(err),
+                },
             };
             failed += 1;
-            warn!("Failed to send packet {} time(s)", failed)
+            warn!("Failed to send packet {} time(s)", failed);
+            if failed == 5 {
+                return Err(CommunicationError::TimedOut);
+            }
         }
     }
 }
 
-impl<'a> RawWrite for Packet<'a> {
-    fn write_u8(&mut self, value: u8) {
+impl<'a> Packet<'a> {
+    pub fn write_u8(&mut self, value: u8) {
         self.buffer[self.pos..self.pos + size_of::<u8>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<u8>();
     }
 
-    fn write_i8(&mut self, value: i8) {
+    pub fn write_i8(&mut self, value: i8) {
         self.buffer[self.pos..self.pos + size_of::<i8>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<i8>();
     }
 
-    fn write_u16(&mut self, value: u16) {
+    pub fn write_u16(&mut self, value: u16) {
         self.buffer[self.pos..self.pos + size_of::<u16>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<u16>();
     }
 
-    fn write_i16(&mut self, value: i16) {
+    pub fn write_i16(&mut self, value: i16) {
         self.buffer[self.pos..self.pos + size_of::<i16>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<i16>();
     }
 
-    fn write_u32(&mut self, value: u32) {
+    pub fn write_u32(&mut self, value: u32) {
         self.buffer[self.pos..self.pos + size_of::<u32>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<u32>();
     }
 
-    fn write_i32(&mut self, value: i32) {
+    pub fn write_i32(&mut self, value: i32) {
         self.buffer[self.pos..self.pos + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<i32>();
     }
 
-    fn write_u64(&mut self, value: u64) {
+    pub fn write_u64(&mut self, value: u64) {
         self.buffer[self.pos..self.pos + size_of::<u64>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<u64>();
     }
 
-    fn write_i64(&mut self, value: i64) {
+    pub fn write_i64(&mut self, value: i64) {
         self.buffer[self.pos..self.pos + size_of::<i64>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<i64>();
     }
 
-    fn write_u128(&mut self, value: u128) {
+    pub fn write_u128(&mut self, value: u128) {
         self.buffer[self.pos..self.pos + size_of::<u128>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<u128>();
     }
 
-    fn write_i128(&mut self, value: i128) {
+    pub fn write_i128(&mut self, value: i128) {
         self.buffer[self.pos..self.pos + size_of::<i128>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<i128>();
     }
 
-    fn write_f32(&mut self, value: f32) {
+    pub fn write_f32(&mut self, value: f32) {
         self.buffer[self.pos..self.pos + size_of::<f32>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<f32>();
     }
 
-    fn write_f64(&mut self, value: f64) {
+    pub fn write_f64(&mut self, value: f64) {
         self.buffer[self.pos..self.pos + size_of::<f64>()].copy_from_slice(&value.to_le_bytes());
         self.pos += size_of::<f64>();
     }
 
-    fn write_raw(&mut self, slice: &[u8]) {
+    pub fn write_raw(&mut self, slice: &[u8]) {
         self.buffer[self.pos..self.pos + slice.len()].copy_from_slice(slice);
         self.pos += slice.len();
     }
 
-    fn write_str(&mut self, string: &str, target_len: usize) {
+    pub fn write_str(&mut self, string: &str, target_len: usize) {
         assert!(string.len() < target_len);
         self.buffer[self.pos..self.pos + string.len()].copy_from_slice(string.as_bytes());
         self.pos += target_len;
     }
 
-    fn pad(&mut self, amount: usize) {
+    pub fn pad(&mut self, amount: usize) {
         self.pos += amount; // zero-initialized
         assert!(self.pos <= self.buffer.len())
-    }
-
-    fn get_data(self) -> Box<[u8]> {
-        self.buffer
     }
 }
