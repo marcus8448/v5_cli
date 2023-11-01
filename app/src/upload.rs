@@ -16,8 +16,8 @@ use v5_core::brain::Brain;
 use v5_core::brain::filesystem::{
     FileFlags, FileType, TransferDirection, TransferTarget, UploadAction, Vid,
 };
-use v5_core::connection::RobotConnectionOptions;
-use v5_core::error::CommandError;
+use v5_core::connection::{Nack, RobotConnectionOptions};
+use v5_core::error::{CommandError, CommunicationError};
 
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm {
     width: 32,
@@ -176,16 +176,27 @@ pub(crate) async fn upload(
         .get_file_metadata_by_name(Vid::Pros, FileFlags::empty(), cold_package_name)
         .await;
 
-    if let Ok(package) = &available_package {
-        if package.size == cold_len as u32 && package.crc == crc {
-            skip_cold = true;
+    match available_package {
+        Ok(package) => {
+            if package.size == cold_len as u32 && package.crc == crc {
+                skip_cold = true;
+            }
         }
-    } else {
-        // todo handle/check nack
+        Err(err) => {
+            match err {
+                CommunicationError::NegativeAcknowledgement(nack) => {
+                    match nack {
+                        Nack::ProgramFileError => {}
+                        _ => return Err(err.into())
+                    }
+                }
+                _ => return Err(err.into())
+            }
+        }
     }
 
     if !skip_cold {
-        println!("Invalid cold package! Re-uploading...");
+        println!("Cold package does not match. Re-uploading...");
         upload_file(
             &mut brain,
             TransferTarget::Flash,
@@ -332,6 +343,7 @@ async fn upload_file(
     linked_file: Option<(&str, Vid)>,
     action: UploadAction,
 ) -> Result<(), CommandError> {
+    let align = *&brain.connection.get_target_packet_alignment();
     let mut transfer = brain
         .file_transfer_initialize(
             TransferDirection::Upload,
@@ -351,7 +363,8 @@ async fn upload_file(
     if let Some((name, vid)) = linked_file {
         transfer.set_link(name, vid).await?;
     }
-    let max_packet_size = (((transfer.parameters.max_packet_size / 2) / 244) * 244) - 14;
+    // 4096 / 2
+    let max_packet_size = (((transfer.parameters.max_packet_size / 2) / align) * align) - 14;
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);

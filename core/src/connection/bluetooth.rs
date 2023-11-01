@@ -15,7 +15,7 @@ use log::{debug, warn};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::connection::SerialConnection;
+use crate::connection::RobotConnection;
 use crate::error::ConnectionError;
 
 const V5_ROBOT_SERVICE: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13d5);
@@ -219,7 +219,19 @@ impl DualSubscribedBluetoothConnection {
 }
 
 #[async_trait]
-impl SerialConnection for DualSubscribedBluetoothConnection {
+impl RobotConnection for DualSubscribedBluetoothConnection {
+    fn get_target_packet_alignment(&self) -> u16 {
+        244
+    }
+
+    async fn hint_begin_packet(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn hint_end_packet(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
     async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         let t = SystemTime::now();
         let guard = self.send_timer.lock().await;
@@ -306,15 +318,14 @@ impl SerialConnection for DualSubscribedBluetoothConnection {
     }
 
     async fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<()> {
-        let mut fail = 0;
+        let start = SystemTime::now();
         while !buf.is_empty() {
             match self.try_read(buf).await {
                 Ok(0) => {
-                    fail += 1;
-                    if fail >= 1000 / 10 {
+                    if SystemTime::now().duration_since(start).unwrap_or(Duration::ZERO) > Duration::from_millis(1000) {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::task::yield_now().await;
                 }
                 Ok(n) => {
                     buf = &mut buf[n..];

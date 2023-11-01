@@ -100,7 +100,7 @@ pub async fn connect_to_brain(
 
 pub async fn connect_to_user(
     options: RobotConnectionOptions,
-) -> Result<Box<dyn SerialConnection + Send>, crate::error::ConnectionError> {
+) -> Result<Box<dyn RobotConnection + Send>, crate::error::ConnectionError> {
     match options {
         RobotConnectionOptions::Serial { port } => {
             let (_, user) = serial::find_ports(port)?;
@@ -129,8 +129,8 @@ pub async fn connect_to_all(
     options: RobotConnectionOptions,
 ) -> Result<
     (
-        Box<dyn SerialConnection + Send>,
-        Box<dyn SerialConnection + Send>,
+        Box<dyn RobotConnection + Send>,
+        Box<dyn RobotConnection + Send>,
     ),
     crate::error::ConnectionError,
 > {
@@ -176,8 +176,11 @@ pub async fn connect_to_all(
 }
 
 #[async_trait::async_trait]
-pub trait SerialConnection {
-    // fn get_max_packet_size(&self) -> usize;
+pub trait RobotConnection {
+    fn get_target_packet_alignment(&self) -> u16;
+
+    async fn hint_begin_packet(&mut self) -> std::io::Result<()>;
+    async fn hint_end_packet(&mut self) -> std::io::Result<()>;
 
     async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
     async fn flush(&mut self) -> std::io::Result<()>;

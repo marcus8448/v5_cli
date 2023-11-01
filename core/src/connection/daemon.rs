@@ -4,15 +4,28 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::connection::SerialConnection;
+use crate::connection::RobotConnection;
 use crate::error::ConnectionError;
 
 pub struct SharedConnection {
     stream: TcpStream,
+    alignment: u16
 }
 
 #[async_trait::async_trait]
-impl SerialConnection for SharedConnection {
+impl RobotConnection for SharedConnection {
+    fn get_target_packet_alignment(&self) -> u16 {
+        self.alignment
+    }
+
+    async fn hint_begin_packet(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn hint_end_packet(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
     async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         loop {
             self.stream.writable().await?;
@@ -76,5 +89,6 @@ impl SerialConnection for SharedConnection {
 pub(crate) async fn open_connection(port: u16) -> Result<SharedConnection, ConnectionError> {
     Ok(SharedConnection {
         stream: TcpStream::connect(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)).await?,
+        alignment: 1 // todo
     })
 }

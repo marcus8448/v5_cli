@@ -10,11 +10,11 @@ pub enum ConnectionError {
     DeviceNotFound,
     #[error("no bluetooth adapters found! Is bluetooth on?")]
     NoBluetoothAdapters,
-    #[error("bluetooth error")]
+    #[error("bluetooth error: `{0}`")]
     BluetoothError(#[from] btleplug::Error),
-    #[error("serial port error")]
+    #[error("serial port error: `{0}`")]
     SerialPortError(#[from] tokio_serial::Error),
-    #[error("serial port error")]
+    #[error("serial port error: `{0}`")]
     IoError(#[from] std::io::Error),
     #[error("invalid PIN")]
     InvalidPIN,
@@ -24,7 +24,7 @@ pub enum ConnectionError {
 pub enum CommunicationError {
     #[error("nack received: `{0}`")]
     NegativeAcknowledgement(Nack),
-    #[error("i/o error")]
+    #[error("i/o error: `{0}`")]
     IoError(#[from] std::io::Error),
     #[error("timed out")]
     TimedOut,
@@ -42,7 +42,7 @@ pub enum CommandError {
     ConnectionError(#[from] ConnectionError),
     #[error("communications error: {0}")]
     CommunicationError(#[from] CommunicationError),
-    #[error("i/o error")]
+    #[error("i/o error: `{0}`")]
     IoError(#[from] std::io::Error),
     #[error("communications parsing error: {0}")]
     ParseError(#[from] ParseError),

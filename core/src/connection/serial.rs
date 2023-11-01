@@ -7,7 +7,7 @@ use tokio_serial::{
     SerialStream,
 };
 
-use crate::connection::SerialConnection;
+use crate::connection::RobotConnection;
 use crate::error::ConnectionError;
 
 pub struct SerialPortConnection {
@@ -15,7 +15,19 @@ pub struct SerialPortConnection {
 }
 
 #[async_trait::async_trait]
-impl SerialConnection for SerialPortConnection {
+impl RobotConnection for SerialPortConnection {
+    fn get_target_packet_alignment(&self) -> u16 {
+        1
+    }
+
+    async fn hint_begin_packet(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn hint_end_packet(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
     async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         loop {
             #[cfg(not(windows))]
@@ -24,7 +36,7 @@ impl SerialConnection for SerialPortConnection {
                 Ok(_) => return Ok(()),
                 Err(err) if err.kind() == WouldBlock => {
                     #[cfg(windows)]
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
                 }
                 Err(err) => return Err(err),
             }
@@ -52,7 +64,7 @@ impl SerialConnection for SerialPortConnection {
                 Ok(_) => return Ok(()),
                 Err(err) if err.kind() == WouldBlock => {
                     #[cfg(windows)]
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
                 }
                 Err(err) => return Err(err),
             };
@@ -75,7 +87,7 @@ impl SerialConnection for SerialPortConnection {
                 }
                 Err(err) if err.kind() == WouldBlock => {
                     #[cfg(windows)]
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    tokio::task::yield_now().await;
                 }
                 Err(err) => return Err(err),
             };

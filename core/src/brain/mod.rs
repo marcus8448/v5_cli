@@ -5,7 +5,7 @@ use crc::{Crc, CRC_16_XMODEM};
 use log::{debug, warn};
 
 use crate::buffer::ReceivingBuffer;
-use crate::connection::{Nack, SerialConnection};
+use crate::connection::{Nack, RobotConnection};
 use crate::error::CommunicationError;
 
 pub mod competition;
@@ -17,14 +17,14 @@ const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const PACKET_HEADER: &[u8; 4] = &[0xc9, 0x36, 0xb8, 0x47];
 const RESPONSE_HEADER: [u8; 2] = [0xAA, 0x55];
 const EXT_PACKET_ID: u8 = 0x56;
-const TIMEOUT: Duration = Duration::from_millis(500);
+const TIMEOUT: Duration = Duration::from_millis(1000);
 
 pub struct Brain {
-    connection: Box<dyn SerialConnection + Send>,
+    pub connection: Box<dyn RobotConnection + Send>,
 }
 
 impl Brain {
-    pub fn new(connection: Box<dyn SerialConnection + Send>) -> Self {
+    pub fn new(connection: Box<dyn RobotConnection + Send>) -> Self {
         Self { connection }
     }
 
@@ -36,7 +36,9 @@ impl Brain {
         assert_eq!(CRC16.checksum(data), 0);
 
         self.connection.clear().await?;
+        self.connection.hint_begin_packet().await?;
         self.connection.write_all(data).await?;
+        self.connection.hint_end_packet().await?;
         self.connection.flush().await?;
         Ok(())
     }
@@ -59,7 +61,7 @@ impl Brain {
             match self.connection.try_read_one().await {
                 Ok(v) => value = v,
                 Err(_) => {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    tokio::time::sleep(Duration::from_millis(2)).await;
                     value = 0;
                     if SystemTime::now()
                         .duration_since(time)
@@ -72,7 +74,7 @@ impl Brain {
             }
         }
         debug!(
-            "response took {}ms",
+            "found response in {}ms",
             SystemTime::now().duration_since(time).unwrap().as_millis()
         );
         Ok(true)
@@ -127,7 +129,9 @@ impl Brain {
         buffer[PACKET_HEADER.len()] = id;
 
         self.connection.clear().await?;
+        self.connection.hint_begin_packet().await?;
         self.connection.write_all(&buffer).await?;
+        self.connection.hint_end_packet().await?;
         self.connection.flush().await?;
 
         let time = SystemTime::now();
@@ -138,7 +142,7 @@ impl Brain {
         };
 
         debug!(
-            "response took {}ms",
+            "found response in {}ms",
             SystemTime::now().duration_since(time).unwrap().as_millis()
         );
 
