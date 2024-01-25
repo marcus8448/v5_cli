@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-v5_core = { path = "../core" }
+v5-serial = { path = "../core" }
 clap = "4"
 crc = "3"
 env_logger = "0.10"

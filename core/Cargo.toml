@@ -1,6 +1,8 @@
 [package]
-name = "v5_core"
-description = "Vex V5 robot serial port accessor"
+name = "v5-serial"
+description = "Library for serial communications with a Vex V5 robot"
+repository = "https://github.com/marcus8448/v5_cli/"
+license = "MIT"
 version = "0.1.0"
 edition = "2021"
 
