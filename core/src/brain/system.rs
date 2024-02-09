@@ -183,7 +183,7 @@ bitflags! {
 
 impl Brain {
     pub async fn get_system_version(&mut self) -> Result<SystemVersion, CommandError> {
-        let mut response = self.send_simple(0xA4).await?;
+        let mut response = self.connection.send_simple(0xA4).await?;
 
         Ok(SystemVersion {
             major: response.read_u8(),
@@ -196,7 +196,7 @@ impl Brain {
     }
 
     pub async fn get_product(&mut self) -> Result<String, CommunicationError> {
-        let mut response = self.send_simple(0x21).await?;
+        let mut response = self.connection.send_simple(0x21).await?;
 
         Ok(response.read_str(response.len()))
     }

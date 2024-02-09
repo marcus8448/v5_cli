@@ -1,6 +1,6 @@
 use clap::{Arg, ArgAction, Command, value_parser};
 
-use v5_core::connection::RobotConnectionOptions;
+use v5_serial::connection::RobotConnectionOptions;
 
 mod competition;
 mod daemon;
@@ -11,8 +11,7 @@ mod upload;
 const PORT: &str = "port";
 const BLUETOOTH: &str = "bluetooth";
 const DAEMON: &str = "daemon";
-const USER_PORT: &str = "user";
-const SYSTEM_PORT: &str = "system";
+const DAEMON_PORT: &str = "daemon-port";
 const MAC_ADDRESS: &str = "mac-address";
 const PIN: &str = "pin";
 const VERBOSE: &str = "verbose";
@@ -70,19 +69,10 @@ async fn run() {
                 .conflicts_with(PORT),
         )
         .arg(
-            Arg::new(SYSTEM_PORT)
-                .help("System port number")
+            Arg::new(DAEMON_PORT)
+                .help("Daemon port number")
                 .short('s')
                 .default_value("5735")
-                .value_parser(value_parser!(u16))
-                .action(ArgAction::Set)
-                .requires(DAEMON),
-        )
-        .arg(
-            Arg::new(USER_PORT)
-                .help("User port number")
-                .short('u')
-                .default_value("5736")
                 .value_parser(value_parser!(u16))
                 .action(ArgAction::Set)
                 .requires(DAEMON),
@@ -117,8 +107,7 @@ async fn run() {
                 }
             } else if root.get_flag(DAEMON) {
                 RobotConnectionOptions::Daemon {
-                    user_port: *root.get_one(USER_PORT).expect("missing user port"),
-                    system_port: *root.get_one(SYSTEM_PORT).expect("missing system port"),
+                    port: *root.get_one(DAEMON_PORT).expect("missing daemon port"),
                 }
             } else {
                 let port: Option<&String> = root.get_one(PORT);
@@ -175,7 +164,7 @@ async fn run() {
                 }
             } {
                 Ok(_) => {}
-                Err(err) => println!("{}", err)
+                Err(err) => println!("{}", err),
             };
         }
     }

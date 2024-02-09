@@ -2,7 +2,8 @@ use std::fmt::{Debug, Display, Formatter};
 use std::mem::size_of;
 use std::time::SystemTime;
 
-use bitflags::bitflags;
+use bitflags::{bitflags, Flags};
+use log::debug;
 
 use crate::brain::Brain;
 use crate::brain::system::Channel;
@@ -269,6 +270,7 @@ impl Brain {
         flags: DeleteFlags,
         filename: &str,
     ) -> Result<(), CommunicationError> {
+        debug!("Deleting file {}", filename);
         let mut packet = self.packet(size_of::<u8>() + size_of::<u8>() + 24, 0x1B);
 
         packet.write_u8(vid.into());
@@ -309,6 +311,8 @@ impl Brain {
         name: &str,
         timestamp: SystemTime,
     ) -> Result<FileTransfer<'a>, CommunicationError> {
+        self.claim_exclusive().await?;
+
         let mut packet = self.packet(
             size_of::<u8>() * 4 + size_of::<u32>() * 3 + 4 + size_of::<u32>() * 2 + 24,
             0x11,
@@ -396,6 +400,7 @@ impl<'a> FileTransfer<'a> {
         let mut packet = self.brain.packet(1, 0x12);
         packet.write_u8(upload_action.into());
         let _response = packet.send().await?;
+        self.brain.unclaim_exclusive().await?;
         Ok(())
     }
 }

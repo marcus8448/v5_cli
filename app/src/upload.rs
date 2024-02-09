@@ -12,12 +12,12 @@ use log::{debug, warn};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-use v5_core::brain::Brain;
-use v5_core::brain::filesystem::{
+use v5_serial::brain::Brain;
+use v5_serial::brain::filesystem::{
     FileFlags, FileType, TransferDirection, TransferTarget, UploadAction, Vid,
 };
-use v5_core::connection::{Nack, RobotConnectionOptions};
-use v5_core::error::{CommandError, CommunicationError};
+use v5_serial::connection::{Nack, RobotConnectionOptions};
+use v5_serial::error::{CommandError, CommunicationError};
 
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&Algorithm {
     width: 32,
@@ -146,7 +146,7 @@ pub(crate) async fn upload(
     let file_ini = format!("slot_{}.ini", index);
     let action = UploadAction::try_from(action.as_str())?;
 
-    let brain = tokio::task::spawn(v5_core::connection::connect_to_brain(options));
+    let brain = tokio::task::spawn(v5_serial::connection::connect_to_brain(options));
     let cold_handle = tokio::task::spawn(load_compressed(cold_package_path)); //probably overkill
     let hot_handle = tokio::task::spawn(load_compressed(hot_package_path));
 
@@ -182,17 +182,13 @@ pub(crate) async fn upload(
                 skip_cold = true;
             }
         }
-        Err(err) => {
-            match err {
-                CommunicationError::NegativeAcknowledgement(nack) => {
-                    match nack {
-                        Nack::ProgramFileError => {}
-                        _ => return Err(err.into())
-                    }
-                }
-                _ => return Err(err.into())
-            }
-        }
+        Err(err) => match err {
+            CommunicationError::NegativeAcknowledgement(nack) => match nack {
+                Nack::ProgramFileError => {}
+                _ => return Err(err.into()),
+            },
+            _ => return Err(err.into()),
+        },
     }
 
     if !skip_cold {
@@ -343,7 +339,8 @@ async fn upload_file(
     linked_file: Option<(&str, Vid)>,
     action: UploadAction,
 ) -> Result<(), CommandError> {
-    let align = *&brain.connection.get_target_packet_alignment();
+    let max_packet_size = brain.connection.get_max_packet_size();
+
     let mut transfer = brain
         .file_transfer_initialize(
             TransferDirection::Upload,
@@ -363,8 +360,8 @@ async fn upload_file(
     if let Some((name, vid)) = linked_file {
         transfer.set_link(name, vid).await?;
     }
-    // 4096 / 2
-    let max_packet_size = (((transfer.parameters.max_packet_size / 2) / align) * align) - 14;
+    let max_packet_size = max_packet_size.min(transfer.parameters.max_packet_size / 2) - 14;
+
     let max_packet_size = max_packet_size - (max_packet_size % 4); //4 byte alignment
     for i in (0..file.len()).step_by(max_packet_size as usize) {
         let end = file.len().min(i + max_packet_size as usize);

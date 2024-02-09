@@ -26,6 +26,8 @@ pub enum CommunicationError {
     NegativeAcknowledgement(Nack),
     #[error("i/o error: `{0}`")]
     IoError(#[from] std::io::Error),
+    #[error("i/o error: `{0}`")]
+    BtIoError(#[from] btleplug::Error),
     #[error("timed out")]
     TimedOut,
     #[error("disconnected")]

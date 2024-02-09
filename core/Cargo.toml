@@ -3,7 +3,7 @@ name = "v5-serial"
 description = "Library for serial communications with a Vex V5 robot"
 repository = "https://github.com/marcus8448/v5_cli/"
 license = "MIT"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]

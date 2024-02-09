@@ -1,7 +1,7 @@
 use clap::{ArgMatches, Command};
 
-use v5_core::connection::RobotConnectionOptions;
-use v5_core::error::CommandError;
+use v5_serial::connection::RobotConnectionOptions;
+use v5_serial::error::CommandError;
 
 pub(crate) const COMMAND: &str = "terminal";
 

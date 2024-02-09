@@ -1,8 +1,6 @@
-use std::cell::Cell;
 use std::convert::TryInto;
-use std::ops::Sub;
+use std::io::Write;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -10,25 +8,29 @@ use btleplug::api::{
     BDAddr, Central, CentralEvent, Characteristic, Manager, Peripheral, ScanFilter, WriteType,
 };
 use btleplug::platform::PeripheralId;
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use log::{debug, warn};
-use tokio::sync::Mutex;
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc::Receiver;
 use uuid::Uuid;
 
-use crate::connection::RobotConnection;
-use crate::error::ConnectionError;
+use crate::buffer::ReceivingBuffer;
+use crate::connection::{CRC16, Nack, RESPONSE_HEADER, RobotConnection};
+use crate::error::{CommunicationError, ConnectionError};
 
 const V5_ROBOT_SERVICE: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13d5);
 
-const CHARACTERISTIC_TX_DATA: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb1306); // WRITE_WITHOUT_RESPONSE | NOTIFY | INDICATE
+const CHARACTERISTIC_TX_DATA: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb1306);
+// WRITE_WITHOUT_RESPONSE | NOTIFY | INDICATE
 const CHARACTERISTIC_RX_DATA: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13f5); // WRITE_WITHOUT_RESPONSE | WRITE | NOTIFY
 
-const CHARACTERISTIC_TX_USER: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb1316); // WRITE_WITHOUT_RESPONSE | NOTIFY | INDICATE
+const CHARACTERISTIC_TX_USER: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb1316);
+// WRITE_WITHOUT_RESPONSE | NOTIFY | INDICATE
 const CHARACTERISTIC_RX_USER: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb1326); // WRITE_WITHOUT_RESPONSE | WRITE | NOTIFY
 
-const CHARACTERISTIC_CODE: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13e5); // READ | WRITE_WITHOUT_RESPONSE | WRITE
-
-const WRITE_TIME: Duration = Duration::from_millis(25);
+const CHARACTERISTIC_CODE: Uuid = Uuid::from_u128(0x08590f7e_db05_467e_8757_72f6faeb13e5);
+// READ | WRITE_WITHOUT_RESPONSE | WRITE
+const AUTH_REQUIRED: u32 = 0xdeadface;
 
 pub(crate) struct Characteristics {
     pub(crate) tx_data: Characteristic,
@@ -39,11 +41,10 @@ pub(crate) struct Characteristics {
 
 pub(crate) async fn connect_to_robot(
     mac_address: Option<String>,
-    pin: Option<String>,
+    mut pin: Option<String>,
 ) -> Result<(btleplug::platform::Peripheral, Characteristics), ConnectionError> {
     let mac_address =
         mac_address.map(|address| BDAddr::from_str(&address).expect("Invalid MAC address"));
-    let pin = pin.as_deref().map(parse_pin);
 
     let manager = match btleplug::platform::Manager::new().await {
         Ok(man) => man,
@@ -128,36 +129,36 @@ pub(crate) async fn connect_to_robot(
     let rx_user = rx_user.expect("char: rx user");
 
     let vec = peripheral.read(&code).await?;
-    if u32::from_be_bytes(vec[0..4].try_into().unwrap()) == 0xdeadface {
-        debug!("Sending PIN display request");
-        peripheral
-            .write(&code, &[0xFF, 0xFF, 0xFF, 0xFF], WriteType::WithoutResponse)
-            .await?;
-    }
+    if u32::from_be_bytes(vec[0..4].try_into().unwrap()) == AUTH_REQUIRED {
+        if pin.is_none() {
+            debug!("Sending PIN display request.");
+            peripheral
+                .write(&code, &[0xFF, 0xFF, 0xFF, 0xFF], WriteType::WithoutResponse)
+                .await?;
 
-    let pin = match pin {
-        None => loop {
             println!("Please enter the PIN shown on the V5 brain");
             let mut str = String::new();
             std::io::stdin()
                 .read_line(&mut str)
                 .expect("Failed to read stdin");
-            if (str.len() == 4 || (str.len() == 5 && str.chars().nth(4).unwrap() == '\n'))
-                && u16::from_str(&str[..4]).is_ok()
-            {
-                break parse_pin(&str[..4]);
-            }
-        },
-        Some(pin) => pin,
-    };
+            pin = Some(str);
+        }
 
-    peripheral
-        .write(&code, &pin, WriteType::WithoutResponse)
-        .await?;
+        assert!(pin.is_some());
+        let pin = pin.as_deref().map_or(Err(()), parse_pin);
+        if pin.is_err() {
+            return Err(ConnectionError::InvalidPIN);
+        }
+        let pin = pin.unwrap();
 
-    let read = peripheral.read(&code).await?;
-    if read != pin {
-        return Err(ConnectionError::InvalidPIN);
+        peripheral
+            .write(&code, &pin, WriteType::WithoutResponse)
+            .await?;
+
+        let read = peripheral.read(&code).await?;
+        if read != pin {
+            return Err(ConnectionError::InvalidPIN);
+        }
     }
 
     Ok((
@@ -171,202 +172,197 @@ pub(crate) async fn connect_to_robot(
     ))
 }
 
-pub(crate) struct DualSubscribedBluetoothConnection {
-    send_timer: Mutex<Cell<SystemTime>>,
-    rx_characteristic: Characteristic,
-    read_buf: Arc<Mutex<Vec<u8>>>,
+pub(crate) async fn find_packet_header(port: &mut Receiver<u8>) -> Result<(), CommunicationError> {
+    let mut value = 0;
+    let mut i = 0;
+    let start = SystemTime::now();
+    loop {
+        if value == RESPONSE_HEADER[i] {
+            i += 1;
+            if i == RESPONSE_HEADER.len() {
+                break;
+            }
+        } else if i > 0 {
+            i = 0;
+            continue;
+        }
+
+        match port.recv().await {
+            Some(v) => value = v,
+            None => {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                value = 0;
+                if SystemTime::now()
+                    .duration_since(start)
+                    .unwrap_or(Duration::ZERO)
+                    > Duration::from_millis(1000)
+                {
+                    return Err(CommunicationError::TimedOut);
+                }
+            }
+        }
+    }
+    debug!(
+        "found header in {}ms",
+        SystemTime::now().duration_since(start).unwrap().as_millis()
+    );
+    Ok(())
+}
+
+pub(crate) struct BluetoothConnection {
+    system_tx: Characteristic,
+    system_rx: Receiver<u8>,
+    user_tx: Characteristic,
+    user_rx: Receiver<u8>,
     peripheral: btleplug::platform::Peripheral,
 }
 
-impl DualSubscribedBluetoothConnection {
+impl BluetoothConnection {
     pub(crate) async fn create(
-        tx_characteristic: Characteristic,
-        rx_characteristic: Characteristic,
+        system_tx: Characteristic,
+        system_rx: Characteristic,
+        user_tx: Characteristic,
+        user_rx: Characteristic,
         peripheral: btleplug::platform::Peripheral,
-    ) -> DualSubscribedBluetoothConnection {
-        let arc = Arc::new(Mutex::new(Vec::new()));
+    ) -> BluetoothConnection {
+        let (system_send, system_buf) = tokio::sync::mpsc::channel(1024);
+        let (user_send, user_buf) = tokio::sync::mpsc::channel(1024);
 
-        let arc1 = arc.clone();
-        let peripheral1 = peripheral.clone();
-        let res = peripheral.subscribe(&tx_characteristic).await;
+        {
+            let res = peripheral.subscribe(&system_rx).await;
+            let res2 = peripheral.subscribe(&user_rx).await;
 
-        if cfg!(not(windows)) {
-            res.unwrap();
-        }
+            let peripheral = peripheral.clone();
 
-        tokio::spawn(async move {
-            let mut generator = peripheral1
-                .notifications()
-                .await
-                .expect("Failed to listen to notifications");
+            if cfg!(not(windows)) {
+                res.unwrap();
+                res2.unwrap();
+            }
 
-            loop {
-                if let Some(val) = generator.next().await {
-                    if val.uuid == tx_characteristic.uuid {
-                        arc1.lock().await.extend(val.value);
+            tokio::spawn(async move {
+                let mut generator = peripheral
+                    .notifications()
+                    .await
+                    .expect("Failed to listen to notifications");
+
+                loop {
+                    if let Some(val) = generator.next().await {
+                        if val.uuid == system_rx.uuid {
+                            system_send.reserve_many(val.value.len()).await.unwrap();
+                            for x in val.value {
+                                system_send.send(x).await.unwrap();
+                            }
+                        } else if val.uuid == user_rx.uuid {
+                            user_send.reserve_many(val.value.len()).await.unwrap();
+                            for x in val.value {
+                                user_send.send(x).await.unwrap();
+                            }
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
 
-        DualSubscribedBluetoothConnection {
-            send_timer: Mutex::new(Cell::new(SystemTime::now().sub(Duration::from_secs(1)))),
-            rx_characteristic,
-            read_buf: arc,
+        BluetoothConnection {
+            system_tx,
+            system_rx: system_buf,
+            user_tx,
+            user_rx: user_buf,
             peripheral,
         }
     }
 }
 
 #[async_trait]
-impl RobotConnection for DualSubscribedBluetoothConnection {
-    fn get_target_packet_alignment(&self) -> u16 {
+impl RobotConnection for BluetoothConnection {
+    fn get_max_packet_size(&self) -> u16 {
         244
     }
 
-    async fn hint_begin_packet(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+    async fn send_packet(&mut self, data: &[u8]) -> Result<ReceivingBuffer, CommunicationError> {
+        self.peripheral
+            .write(&self.system_tx, data, WriteType::WithoutResponse)
+            .await?;
 
-    async fn hint_end_packet(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+        find_packet_header(&mut self.system_rx).await?;
 
-    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        let t = SystemTime::now();
-        let guard = self.send_timer.lock().await;
-        let mut chunks = buf.chunks_exact(244);
-        for chunk in chunks.by_ref() {
-            let time2 = guard.get();
-            if let Some(duration) = WRITE_TIME.checked_sub(
-                SystemTime::now()
-                    .duration_since(time2)
-                    .expect("time ran backwards"),
-            ) {
-                tokio::time::sleep(duration).await;
-            }
-            guard.set(SystemTime::now());
-            if let Err(err) = self
-                .peripheral
-                .write(&self.rx_characteristic, chunk, WriteType::WithoutResponse)
-                .await
-            {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ));
-            }
+        let mut payload = Vec::with_capacity(64);
+        payload.extend_from_slice(&RESPONSE_HEADER);
+
+        let command = self.system_rx.recv().await.unwrap();
+        payload.push(command);
+
+        let mut len = self.system_rx.recv().await.unwrap() as u16;
+        payload.push(len as u8);
+        if len & 0b1000_0000 != 0 {
+            let nxt = self.system_rx.recv().await.unwrap();
+            len = u16::from_le_bytes([len as u8 & 0b0111_1111, nxt]);
+            payload.push(nxt);
         }
 
-        let remainder = chunks.remainder();
+        let start = payload.len();
+        payload.resize(start + len as usize, 0_u8);
 
-        if !remainder.is_empty() {
-            let time1 = guard.get();
-            if let Some(duration) = WRITE_TIME.checked_sub(
-                SystemTime::now()
-                    .duration_since(time1)
-                    .expect("time ran backwards"),
-            ) {
-                tokio::time::sleep(duration).await;
-            }
-            guard.set(SystemTime::now());
-            drop(guard);
-            if let Err(err) = self
-                .peripheral
-                .write(&self.rx_characteristic, remainder, WriteType::WithResponse)
-                .await
-            {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    err.to_string(),
-                ));
-            }
+        for i in 0..len {
+            payload[start + i as usize] = self.system_rx.recv().await.unwrap();
         }
 
-        debug!(
-            "write took {}ms",
-            SystemTime::now()
-                .duration_since(t)
-                .expect("time ran backwards")
-                .as_millis()
-        );
+        assert_eq!(data[2], command);
 
-        Ok(())
-    }
-
-    async fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-
-    async fn clear(&mut self) -> std::io::Result<()> {
-        let mut guard = self.read_buf.lock().await;
-        if !guard.is_empty() {
-            guard.clear();
+        if let Ok(nack) = Nack::try_from(payload[start + 1]) {
+            return Err(CommunicationError::NegativeAcknowledgement(nack));
         }
 
-        Ok(())
+        assert_eq!(CRC16.checksum(&payload), 0);
+
+        Ok(ReceivingBuffer::new(payload.into_boxed_slice(), start + 2))
     }
 
-    async fn try_read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut guard = self.read_buf.lock().await;
-        let len = buf.len().min(guard.len());
-        buf[..len].copy_from_slice(&guard[..len]);
-        guard.copy_within(len.., 0);
-        let i = guard.len();
-        guard.truncate(i - len);
-        Ok(len)
+    async fn write_serial(&mut self, data: &[u8]) -> Result<usize, CommunicationError> {
+        self.peripheral
+            .write(&self.user_tx, data, WriteType::WithoutResponse)
+            .await?;
+        Ok(data.len())
     }
 
-    async fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<()> {
-        let start = SystemTime::now();
-        while !buf.is_empty() {
-            match self.try_read(buf).await {
-                Ok(0) => {
-                    if SystemTime::now().duration_since(start).unwrap_or(Duration::ZERO) > Duration::from_millis(1000) {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
-                Ok(n) => {
-                    buf = &mut buf[n..];
-                }
-                Err(e) => return Err(e),
+    async fn read_serial(&mut self, data: &mut [u8]) -> Result<usize, CommunicationError> {
+        for i in 0..data.len() {
+            data[i] = self.user_rx.recv().await.unwrap();
+        }
+        Ok(data.len())
+    }
+
+    async fn reset(&mut self) -> Result<(), CommunicationError> {
+        for x in self.peripheral.characteristics() {
+            if x.uuid == CHARACTERISTIC_CODE {
+                let pin = self.peripheral.read(&x).await?;
+                self.peripheral
+                    .write(&x, &[0xFF, 0xFF, 0xFF, 0xFF], WriteType::WithoutResponse)
+                    .await?;
+                self.peripheral
+                    .write(&x, &pin, WriteType::WithoutResponse)
+                    .await?;
+                assert_eq!(self.peripheral.read(&x).await?, pin);
+                return Ok(());
             }
         }
-        if !buf.is_empty() {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
-    async fn try_read_one(&mut self) -> std::io::Result<u8> {
-        let mut guard = self.read_buf.lock().await;
-        return if !guard.is_empty() {
-            Ok(guard.remove(0))
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof",
-            ))
-        };
+        Err(CommunicationError::Eof)
     }
 }
 
-fn parse_pin(str: &str) -> [u8; 4] {
-    assert_eq!(str.len(), 4);
+fn parse_pin(str: &str) -> Result<[u8; 4], ()> {
     let mut chars = str.chars();
-    u16::from_str(str).expect("Invalid PIN!");
-
-    [
-        chars.next().unwrap().to_digit(10).unwrap() as u8,
-        chars.next().unwrap().to_digit(10).unwrap() as u8,
-        chars.next().unwrap().to_digit(10).unwrap() as u8,
-        chars.next().unwrap().to_digit(10).unwrap() as u8,
-    ]
+    let mut output = [0_u8; 4];
+    for i in 0..4 {
+        if let Some(next) = chars.next() {
+            if next.is_digit(10) {
+                output[i] = next.to_digit(10).unwrap() as u8;
+                continue;
+            }
+        }
+        return Err(());
+    }
+    Ok(output)
 }
 
 async fn find_vex_device(
