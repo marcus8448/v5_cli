@@ -326,10 +326,10 @@ impl RobotConnection for BluetoothConnection {
     }
 
     async fn read_serial(&mut self, data: &mut [u8]) -> Result<usize, CommunicationError> {
-        for i in 0..data.len() {
-            data[i] = self.user_rx.recv().await.unwrap();
-        }
-        Ok(data.len())
+        let mut tmp_vec = Vec::with_capacity(data.len());
+        let received = self.user_rx.recv_many(&mut tmp_vec, data.len()).await;
+        data[..received].copy_from_slice(&tmp_vec[..received]);
+        Ok(received)
     }
 
     async fn reset(&mut self) -> Result<(), CommunicationError> {
@@ -347,6 +347,11 @@ impl RobotConnection for BluetoothConnection {
             }
         }
         Err(CommunicationError::Eof)
+    }
+
+    async fn shutdown(&mut self) -> Result<(), CommunicationError> {
+        self.peripheral.disconnect().await?;
+        Ok(())
     }
 }
 

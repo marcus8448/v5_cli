@@ -119,6 +119,14 @@ impl RobotConnection for SerialPortConnection {
     async fn reset(&mut self) -> Result<(), CommunicationError> {
         todo!()
     }
+
+    async fn shutdown(&mut self) -> Result<(), CommunicationError> {
+        self.system_port.shutdown().await?;
+        if let Some(stream) = self.communications_port.as_mut() {
+            stream.shutdown().await?;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn find_ports(_port: Option<String>) -> Result<(String, String), ConnectionError> {

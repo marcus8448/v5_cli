@@ -260,4 +260,6 @@ pub trait RobotConnection: Send {
     async fn read_serial(&mut self, data: &mut [u8]) -> Result<usize, CommunicationError>;
 
     async fn reset(&mut self) -> Result<(), CommunicationError>;
+
+    async fn shutdown(&mut self) -> Result<(), CommunicationError>;
 }

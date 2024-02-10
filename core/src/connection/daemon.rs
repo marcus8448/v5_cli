@@ -90,6 +90,11 @@ impl RobotConnection for SharedConnection {
         self.stream.write_u8(DaemonCommand::Reset.into()).await?;
         Ok(())
     }
+
+    async fn shutdown(&mut self) -> Result<(), CommunicationError> {
+        self.stream.shutdown().await?;
+        Ok(())
+    }
 }
 
 pub(crate) async fn open_connection(port: u16) -> Result<SharedConnection, ConnectionError> {
